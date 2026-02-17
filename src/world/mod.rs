@@ -15,6 +15,9 @@ pub enum Block {
     Dirt,
     Stone,
     Sand,
+    Snow,
+    Wood,
+    Leaves,
 }
 
 #[derive(Clone)]
@@ -70,7 +73,7 @@ pub struct StreamTimer(pub Timer);
 
 pub fn generate_chunk(pos: IVec2, seed: u32) -> Chunk {
     let mut chunk = Chunk::new(pos);
-    let perlin = Perlin::new(seed);
+    let noise = TerrainNoise::new(seed);
 
     let base_x = pos.x * CHUNK_SIZE as i32;
     let base_z = pos.y * CHUNK_SIZE as i32;
@@ -80,23 +83,41 @@ pub fn generate_chunk(pos: IVec2, seed: u32) -> Chunk {
             let wx = base_x + x as i32;
             let wz = base_z + z as i32;
 
-            let n1 = perlin.get([wx as f64 * 0.008, wz as f64 * 0.008]) as f32;
-            let n2 = perlin.get([wx as f64 * 0.021, wz as f64 * 0.021]) as f32;
-            let n3 = perlin.get([wx as f64 * 0.004, wz as f64 * 0.004]) as f32;
-
-            let mut height = SEA_LEVEL as f32 + n1 * 22.0 + n2 * 9.0 + n3 * 30.0;
-            height = height.clamp(6.0, (WORLD_HEIGHT - 1) as f32);
-            let h = height as usize;
+            let (h, biome, ridge) = sample_surface(&noise, wx, wz);
 
             for y in 0..=h {
-                let block = if y == h {
-                    if y as i32 <= SEA_LEVEL + 1 {
+                let yi = y as i32;
+                let is_surface = y == h;
+                let is_subsurface = y + 4 > h;
+
+                if yi > 6 && y + 4 < h {
+                    let warp = noise.perlin_cave_warp.get([
+                        wx as f64 * 0.018,
+                        yi as f64 * 0.018,
+                        wz as f64 * 0.018,
+                    ]) as f32;
+                    let cave = noise.perlin_cave.get([
+                        wx as f64 * 0.035 + warp as f64 * 0.8,
+                        yi as f64 * 0.052,
+                        wz as f64 * 0.035 - warp as f64 * 0.8,
+                    ]) as f32;
+                    let cave_threshold =
+                        0.62 + ((yi as f32 / WORLD_HEIGHT as f32) - 0.5) * 0.06 + ridge.abs() * 0.05;
+                    if cave > cave_threshold {
+                        continue;
+                    }
+                }
+
+                let block = if is_surface {
+                    if yi <= SEA_LEVEL || biome < -0.62 {
                         Block::Sand
+                    } else if yi >= SEA_LEVEL + 46 {
+                        Block::Snow
                     } else {
                         Block::Grass
                     }
-                } else if y + 4 > h {
-                    if y as i32 <= SEA_LEVEL {
+                } else if is_subsurface {
+                    if yi <= SEA_LEVEL - 1 || biome < -0.55 {
                         Block::Sand
                     } else {
                         Block::Dirt
@@ -109,6 +130,7 @@ pub fn generate_chunk(pos: IVec2, seed: u32) -> Chunk {
         }
     }
 
+    stamp_trees(&mut chunk, &noise);
     chunk
 }
 
@@ -290,7 +312,199 @@ fn block_color(block: Block) -> [f32; 4] {
         Block::Dirt => [0.44, 0.31, 0.18, 1.0],
         Block::Stone => [0.48, 0.48, 0.52, 1.0],
         Block::Sand => [0.83, 0.77, 0.53, 1.0],
+        Block::Snow => [0.88, 0.91, 0.95, 1.0],
+        Block::Wood => [0.41, 0.30, 0.18, 1.0],
+        Block::Leaves => [0.20, 0.46, 0.21, 1.0],
     }
+}
+
+struct TerrainNoise {
+    seed: u32,
+    perlin_macro: Perlin,
+    perlin_detail: Perlin,
+    perlin_ridge: Perlin,
+    perlin_biome: Perlin,
+    perlin_continent: Perlin,
+    perlin_cave: Perlin,
+    perlin_cave_warp: Perlin,
+}
+
+impl TerrainNoise {
+    fn new(seed: u32) -> Self {
+        Self {
+            seed,
+            perlin_macro: Perlin::new(seed),
+            perlin_detail: Perlin::new(seed ^ 0x9E37_79B9),
+            perlin_ridge: Perlin::new(seed ^ 0xA341_316C),
+            perlin_biome: Perlin::new(seed ^ 0xC801_3EA4),
+            perlin_continent: Perlin::new(seed ^ 0x6F12_BD9A),
+            perlin_cave: Perlin::new(seed ^ 0x7F4A_7C15),
+            perlin_cave_warp: Perlin::new(seed ^ 0xB529_7A4D),
+        }
+    }
+}
+
+#[inline]
+fn sample_surface(noise: &TerrainNoise, wx: i32, wz: i32) -> (usize, f32, f32) {
+    let n1 = noise.perlin_macro.get([wx as f64 * 0.008, wz as f64 * 0.008]) as f32;
+    let n2 = noise.perlin_detail.get([wx as f64 * 0.024, wz as f64 * 0.024]) as f32;
+    let n3 = noise.perlin_macro.get([wx as f64 * 0.0035, wz as f64 * 0.0035]) as f32;
+    let ridge = noise.perlin_ridge.get([wx as f64 * 0.015, wz as f64 * 0.015]) as f32;
+    let biome = noise.perlin_biome.get([wx as f64 * 0.0024, wz as f64 * 0.0024]) as f32;
+    let continent = noise
+        .perlin_continent
+        .get([wx as f64 * 0.0017, wz as f64 * 0.0017]) as f32;
+    let ridge_abs = ridge.abs();
+    let cliff_mask = (ridge_abs - 0.58).max(0.0);
+    let cliff = cliff_mask * cliff_mask * 62.0;
+    let continental = ((continent + 1.0) * 0.5).powf(1.3);
+    let base = SEA_LEVEL as f32 - 20.0 + continental * 50.0;
+    let mut height = base + n1 * 16.0 + n2 * 7.0 + n3 * 20.0 + cliff + biome * 6.0;
+    height = height.clamp(6.0, (WORLD_HEIGHT - 2) as f32);
+    (height as usize, biome, ridge)
+}
+
+#[derive(Copy, Clone)]
+enum TreeKind {
+    Oak,
+    Pine,
+}
+
+fn stamp_trees(chunk: &mut Chunk, noise: &TerrainNoise) {
+    const TREE_CELL: i32 = 9;
+    const TREE_MARGIN: i32 = 6;
+
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let min_x = base_x - TREE_MARGIN;
+    let max_x = base_x + CHUNK_SIZE as i32 - 1 + TREE_MARGIN;
+    let min_z = base_z - TREE_MARGIN;
+    let max_z = base_z + CHUNK_SIZE as i32 - 1 + TREE_MARGIN;
+
+    let cell_min_x = div_floor(min_x, TREE_CELL);
+    let cell_max_x = div_floor(max_x, TREE_CELL);
+    let cell_min_z = div_floor(min_z, TREE_CELL);
+    let cell_max_z = div_floor(max_z, TREE_CELL);
+
+    for cz in cell_min_z..=cell_max_z {
+        for cx in cell_min_x..=cell_max_x {
+            let h = hash3(cx, cz, noise.seed ^ 0x2A6B_45D1);
+            let tx = cx * TREE_CELL + (h as i32 & 7);
+            let tz = cz * TREE_CELL + (((h >> 8) as i32) & 7);
+
+            if tx < min_x || tx > max_x || tz < min_z || tz > max_z {
+                continue;
+            }
+
+            let (surface_y, biome, ridge) = sample_surface(noise, tx, tz);
+            let sy = surface_y as i32;
+            if sy <= SEA_LEVEL + 2 {
+                continue;
+            }
+            if biome < -0.48 {
+                continue;
+            }
+            if ridge.abs() > 0.62 {
+                continue;
+            }
+            if (h >> 16) & 0xFF < 92 {
+                continue;
+            }
+
+            let kind = if biome > 0.30 || sy >= SEA_LEVEL + 42 {
+                TreeKind::Pine
+            } else {
+                TreeKind::Oak
+            };
+
+            let local_seed = hash3(tx, tz, noise.seed ^ 0x91C2_8E4B);
+            place_tree(chunk, tx, sy + 1, tz, kind, local_seed);
+        }
+    }
+}
+
+fn place_tree(chunk: &mut Chunk, tx: i32, base_y: i32, tz: i32, kind: TreeKind, local_seed: u32) {
+    match kind {
+        TreeKind::Oak => {
+            let trunk_h = 4 + (local_seed % 3) as i32;
+            for dy in 0..trunk_h {
+                set_in_chunk(chunk, tx, base_y + dy, tz, Block::Wood);
+            }
+            let top = base_y + trunk_h - 1;
+            for dy in -2_i32..=2_i32 {
+                let r: i32 = if dy.abs() == 2 { 1 } else { 2 };
+                for dz in -r..=r {
+                    for dx in -r..=r {
+                        if dx.abs() + dz.abs() > r + 1 {
+                            continue;
+                        }
+                        set_in_chunk(chunk, tx + dx, top + dy, tz + dz, Block::Leaves);
+                    }
+                }
+            }
+        }
+        TreeKind::Pine => {
+            let trunk_h = 6 + (local_seed % 3) as i32;
+            for dy in 0..trunk_h {
+                set_in_chunk(chunk, tx, base_y + dy, tz, Block::Wood);
+            }
+            let top = base_y + trunk_h;
+            for layer in 0..5 {
+                let y = top - layer;
+                let r = if layer <= 1 { 1_i32 } else { 2_i32 };
+                for dz in -r..=r {
+                    for dx in -r..=r {
+                        if dx.abs() + dz.abs() > r + 1 {
+                            continue;
+                        }
+                        set_in_chunk(chunk, tx + dx, y, tz + dz, Block::Leaves);
+                    }
+                }
+            }
+            set_in_chunk(chunk, tx, top + 1, tz, Block::Leaves);
+        }
+    }
+}
+
+fn set_in_chunk(chunk: &mut Chunk, wx: i32, wy: i32, wz: i32, block: Block) {
+    if !(0..WORLD_HEIGHT as i32).contains(&wy) {
+        return;
+    }
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let lx = wx - base_x;
+    let lz = wz - base_z;
+    if lx < 0 || lz < 0 || lx >= CHUNK_SIZE as i32 || lz >= CHUNK_SIZE as i32 {
+        return;
+    }
+
+    let x = lx as usize;
+    let y = wy as usize;
+    let z = lz as usize;
+    let current = chunk.get_local(x, y, z);
+
+    match block {
+        Block::Wood => {
+            if current == Block::Air || current == Block::Leaves {
+                chunk.set_local(x, y, z, Block::Wood);
+            }
+        }
+        Block::Leaves => {
+            if current == Block::Air {
+                chunk.set_local(x, y, z, Block::Leaves);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[inline]
+fn hash3(x: i32, z: i32, seed: u32) -> u32 {
+    let mut h = seed
+        ^ (x as u32).wrapping_mul(374_761_393)
+        ^ (z as u32).wrapping_mul(668_265_263);
+    h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+    h ^ (h >> 16)
 }
 
 #[derive(Copy, Clone)]

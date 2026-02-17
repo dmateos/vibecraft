@@ -1,5 +1,5 @@
 pub const CHUNK_SIZE: usize = 32;
-pub const WORLD_HEIGHT: usize = 128;
+pub const WORLD_HEIGHT: usize = 192;
 pub const VIEW_DISTANCE_CHUNKS: i32 = 10;
 pub const SEA_LEVEL: i32 = 48;
 pub const MAX_CHUNKS_GENERATED_PER_TICK: usize = 24;

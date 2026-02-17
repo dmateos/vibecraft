@@ -13,9 +13,10 @@ use crate::world::{chunk_distance_sq, div_floor, VoxelWorld};
 const CLOUD_CELL_SIZE: f32 = 4.0;
 const CLOUD_CHUNK_CELLS: i32 = 24;
 const CLOUD_VIEW_DISTANCE: i32 = 8;
-const CLOUD_LAYER_Y: f32 = 142.0;
-const CLOUD_THICKNESS: f32 = 3.0;
+const CLOUD_LAYER_Y: f32 = 238.0;
+const CLOUD_THICKNESS: f32 = 2.2;
 const MAX_CLOUD_CHUNKS_PER_TICK: usize = 8;
+const CLOUD_DRIFT_SPEED: Vec2 = Vec2::new(1.8, 0.6);
 
 #[derive(Resource)]
 pub struct CloudMaterial(pub Handle<StandardMaterial>);
@@ -25,9 +26,24 @@ struct CloudRender {
     entity: Entity,
 }
 
+#[derive(Component, Clone, Copy)]
+pub(crate) struct CloudChunk {
+    pos: IVec2,
+}
+
 #[derive(Resource, Default)]
 pub struct LoadedClouds {
     entries: HashMap<IVec2, CloudRender>,
+}
+
+impl LoadedClouds {
+    pub fn clear_and_despawn(&mut self, commands: &mut Commands) {
+        let items: Vec<CloudRender> = self.entries.values().cloned().collect();
+        self.entries.clear();
+        for item in items {
+            commands.entity(item.entity).despawn_recursive();
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -38,7 +54,8 @@ pub fn setup_clouds(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.97, 1.0),
+        base_color: Color::srgba(0.97, 0.98, 1.0, 0.84),
+        alpha_mode: AlphaMode::Blend,
         perceptual_roughness: 1.0,
         metallic: 0.0,
         reflectance: 0.02,
@@ -122,10 +139,25 @@ pub fn stream_clouds_around_camera(
                 },
                 NotShadowCaster,
                 NotShadowReceiver,
+                CloudChunk { pos },
             ))
             .id();
 
         loaded.entries.insert(pos, CloudRender { entity });
+    }
+}
+
+pub fn animate_clouds(time: Res<Time>, mut q: Query<(&CloudChunk, &mut Transform)>) {
+    let t = time.elapsed_seconds_wrapped();
+    let drift = CLOUD_DRIFT_SPEED * t;
+    let chunk_size = CLOUD_CHUNK_CELLS as f32 * CLOUD_CELL_SIZE;
+
+    for (chunk, mut transform) in &mut q {
+        transform.translation = Vec3::new(
+            chunk.pos.x as f32 * chunk_size + drift.x,
+            CLOUD_LAYER_Y + (t * 0.27 + (chunk.pos.x ^ chunk.pos.y) as f32 * 0.11).sin() * 0.55,
+            chunk.pos.y as f32 * chunk_size + drift.y,
+        );
     }
 }
 
@@ -269,5 +301,5 @@ fn cloud_cell_filled(
     let b = perlin_detail.get([x as f64 * 0.018, z as f64 * 0.018]) as f32;
     let mask = perlin_mask.get([x as f64 * 0.006 + 913.7, z as f64 * 0.006 - 147.3]) as f32;
     let density = a * 0.66 + b * 0.34;
-    density > 0.1 && mask > -0.15
+    density > 0.24 && mask > -0.08
 }

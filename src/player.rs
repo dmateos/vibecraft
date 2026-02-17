@@ -17,6 +17,7 @@ pub struct FlyCam {
     pub sensitivity: f32,
     pub velocity: Vec3,
     pub grounded: bool,
+    pub fly_mode: bool,
 }
 
 pub fn camera_look(
@@ -76,6 +77,12 @@ pub fn player_move_and_collision(
         return;
     };
 
+    if keys.just_pressed(KeyCode::KeyF) {
+        cam.fly_mode = !cam.fly_mode;
+        cam.velocity = Vec3::ZERO;
+        cam.grounded = false;
+    }
+
     let dt = time.delta_seconds();
     let mut wish = Vec3::ZERO;
     let mut forward = *transform.forward();
@@ -108,6 +115,23 @@ pub fn player_move_and_collision(
         1.0
     };
     let speed = WALK_SPEED * sprint;
+
+    if cam.fly_mode {
+        if keys.pressed(KeyCode::Space) {
+            wish += Vec3::Y;
+        }
+        if keys.pressed(KeyCode::ShiftLeft) {
+            wish -= Vec3::Y;
+        }
+
+        if wish.length_squared() > 0.0 {
+            transform.translation += wish.normalize() * speed * 1.7 * dt;
+        }
+        cam.velocity = Vec3::ZERO;
+        cam.grounded = false;
+        return;
+    }
+
     if wish.length_squared() > 0.0 {
         wish = wish.normalize() * speed;
     }

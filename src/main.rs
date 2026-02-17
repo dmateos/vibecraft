@@ -9,6 +9,7 @@ mod water;
 mod world;
 
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
@@ -52,6 +53,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(MaterialPlugin::<VoxelMaterial>::default())
+        .add_plugins(water::water_material_plugin())
         .add_systems(
             Startup,
             (setup, clouds::setup_clouds, water::setup_water, ui::spawn_crosshair),
@@ -66,7 +68,9 @@ fn main() {
                 streaming::stream_chunks_around_camera,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
+                clouds::animate_clouds,
                 interact::highlight_targeted_block,
+                regenerate_world_on_key,
             ),
         )
         .run();
@@ -101,6 +105,7 @@ fn setup(
             sensitivity: 0.002,
             velocity: Vec3::ZERO,
             grounded: false,
+            fly_mode: false,
         },
     ));
 
@@ -118,4 +123,37 @@ fn setup(
         window.cursor.visible = false;
         window.cursor.grab_mode = CursorGrabMode::Locked;
     }
+}
+
+fn regenerate_world_on_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut world: ResMut<VoxelWorld>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    mut loaded_clouds: ResMut<clouds::LoadedClouds>,
+    mut loaded_water: ResMut<water::LoadedWater>,
+) {
+    if !keys.just_pressed(KeyCode::KeyR) {
+        return;
+    }
+
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mut new_seed = (t as u32) ^ ((t >> 32) as u32) ^ world.seed.rotate_left(13);
+    if new_seed == 0 {
+        new_seed = 1;
+    }
+    world.seed = new_seed;
+    world.chunks.clear();
+
+    let chunk_entities: Vec<Entity> = loaded_chunks.entries.values().map(|c| c.entity).collect();
+    loaded_chunks.entries.clear();
+    for entity in chunk_entities {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    loaded_clouds.clear_and_despawn(&mut commands);
+    loaded_water.clear_and_despawn(&mut commands);
 }

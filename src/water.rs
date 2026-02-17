@@ -1,10 +1,13 @@
+#![allow(dead_code)]
+
 use std::collections::{HashMap, HashSet};
 
-use bevy::pbr::NotShadowCaster;
+use bevy::pbr::{Material, MaterialPlugin, NotShadowCaster};
 use bevy::prelude::*;
+use bevy::reflect::TypePath;
 use bevy::render::mesh::Indices;
 use bevy::render::render_asset::RenderAssetUsages;
-use bevy::render::render_resource::PrimitiveTopology;
+use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, ShaderType};
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, VIEW_DISTANCE_CHUNKS};
 use crate::player::FlyCam;
@@ -12,8 +15,32 @@ use crate::world::{chunk_distance_sq, div_floor};
 
 const MAX_WATER_CHUNKS_PER_TICK: usize = 24;
 
+#[derive(Clone, Copy, Debug, ShaderType)]
+pub struct WaterMaterialParams {
+    pub shallow_color: Vec4,
+    pub deep_color: Vec4,
+    pub wave: Vec4,
+    pub foam: Vec4,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct WaterSurfaceMaterial {
+    #[uniform(0)]
+    pub params: WaterMaterialParams,
+}
+
+impl Material for WaterSurfaceMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/water_material.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+}
+
 #[derive(Resource)]
-pub struct WaterMaterial(pub Handle<StandardMaterial>);
+pub struct WaterMaterial(pub Handle<WaterSurfaceMaterial>);
 
 #[derive(Resource)]
 pub struct WaterMesh(pub Handle<Mesh>);
@@ -28,22 +55,35 @@ pub struct LoadedWater {
     entries: HashMap<IVec2, WaterRender>,
 }
 
+impl LoadedWater {
+    pub fn clear_and_despawn(&mut self, commands: &mut Commands) {
+        let items: Vec<WaterRender> = self.entries.values().cloned().collect();
+        self.entries.clear();
+        for item in items {
+            commands.entity(item.entity).despawn_recursive();
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct WaterStreamTimer(pub Timer);
 
+pub fn water_material_plugin() -> MaterialPlugin<WaterSurfaceMaterial> {
+    MaterialPlugin::<WaterSurfaceMaterial>::default()
+}
+
 pub fn setup_water(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<WaterSurfaceMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.10, 0.36, 0.64, 0.72),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.08,
-        metallic: 0.02,
-        reflectance: 0.35,
-        cull_mode: None,
-        ..default()
+    let material = materials.add(WaterSurfaceMaterial {
+        params: WaterMaterialParams {
+            shallow_color: Vec4::new(0.18, 0.50, 0.80, 0.88),
+            deep_color: Vec4::new(0.04, 0.16, 0.31, 0.94),
+            wave: Vec4::new(0.065, 2.4, 0.9, 0.5),
+            foam: Vec4::new(0.12, 0.0, 0.0, 0.0),
+        },
     });
 
     let mesh = meshes.add(build_water_mesh());
@@ -109,7 +149,7 @@ pub fn stream_water_around_camera(
 
         let entity = commands
             .spawn((
-                PbrBundle {
+                MaterialMeshBundle::<WaterSurfaceMaterial> {
                     mesh: water_mesh.0.clone(),
                     material: water_material.0.clone(),
                     transform: Transform::from_translation(translation),
@@ -127,7 +167,7 @@ fn build_water_mesh() -> Mesh {
     let size = CHUNK_SIZE as f32;
     let positions = vec![[0.0, 0.0, 0.0], [size, 0.0, 0.0], [size, 0.0, size], [0.0, 0.0, size]];
     let normals = vec![[0.0, 1.0, 0.0]; 4];
-    let indices = vec![0_u32, 1, 2, 0, 2, 3];
+    let indices = vec![0_u32, 2, 1, 0, 3, 2];
 
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
