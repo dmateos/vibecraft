@@ -33,7 +33,7 @@ fn main() {
             seed: 1337,
             chunks: HashMap::new(),
         })
-        .insert_resource(TerrainMode::Procedural)
+        .insert_resource(TerrainMode::Flat)
         .insert_resource(LoadedChunks::default())
         .insert_resource(StreamTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
         .insert_resource(clouds::LoadedClouds::default())
@@ -163,6 +163,7 @@ fn regenerate_world_on_key(
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
     mut loaded_water: ResMut<water::LoadedWater>,
     prompt: Res<generation::PromptInputState>,
+    mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
     if prompt.active {
         return;
@@ -191,6 +192,13 @@ fn regenerate_world_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_water.clear_and_despawn(&mut commands);
+
+    if let Ok(mut cam) = cam_q.get_single_mut() {
+        let min_eye_y = SEA_LEVEL as f32 + 12.0;
+        if cam.translation.y < min_eye_y {
+            cam.translation.y = min_eye_y;
+        }
+    }
 }
 
 fn toggle_terrain_mode_on_key(
@@ -202,6 +210,7 @@ fn toggle_terrain_mode_on_key(
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
     mut loaded_water: ResMut<water::LoadedWater>,
     prompt: Res<generation::PromptInputState>,
+    mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
     if prompt.active {
         return;
@@ -222,4 +231,11 @@ fn toggle_terrain_mode_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_water.clear_and_despawn(&mut commands);
+
+    if let Ok(mut cam) = cam_q.get_single_mut() {
+        let min_eye_y = SEA_LEVEL as f32 + 12.0;
+        if cam.translation.y < min_eye_y {
+            cam.translation.y = min_eye_y;
+        }
+    }
 }

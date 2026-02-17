@@ -96,7 +96,7 @@ pub fn update_hud_text(
     };
 
     text.sections[0].value = format!(
-        "Terrain: {} (F6 toggle)\nBlock [{} / {}]: {}  |  Wheel=Cycle\nPrompt ({status}): {prompt_preview}\nP=Edit Prompt, Enter=Submit, L/T=Send LLM, J=Load JSON, G=Demo, R/F5=Reseed",
+        "Terrain: {} (F6 toggle)\nBlock [{} / {}]: {}  |  Wheel=Cycle\nPrompt ({status}): {prompt_preview}\nP=Open Prompt, Enter=Submit, Esc=Close, L/T=Send LLM, J=Load JSON, G=Demo, R/F5=Reseed",
         terrain_mode.label(),
         palette.selected_index() + 1,
         palette.len(),

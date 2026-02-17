@@ -1,6 +1,7 @@
 mod compiler;
 mod executor;
 mod live;
+mod planner;
 mod schema;
 mod validator;
 
@@ -20,6 +21,7 @@ pub use live::{
     edit_prompt_input, initialize_prompt_input, poll_live_llm_result, toggle_prompt_input_mode,
     trigger_live_llm_generation_on_key, update_prompt_window_title, LiveLlmState, PromptInputState,
 };
+pub use planner::build_structured_plan;
 
 pub fn submit_request(
     req: GenerationRequest,
@@ -72,27 +74,53 @@ pub fn trigger_demo_generation_on_key(
             GenerationOp::PaintRegion {
                 shape: "circle".to_string(),
                 center: [px, pz],
-                radius: 12,
+                radius: 16,
                 surface_block: "grass".to_string(),
                 seed: world.seed ^ 101,
             },
-            GenerationOp::PlacePrefab {
-                prefab: "stone_ring".to_string(),
-                position: [px, crate::config::SEA_LEVEL + 2, pz],
-                rotation: 0,
-                seed: world.seed ^ 202,
+            GenerationOp::HollowBox {
+                min: [px - 8, crate::config::SEA_LEVEL + 2, pz - 8],
+                max: [px + 8, crate::config::SEA_LEVEL + 14, pz + 8],
+                wall_block: "castle_stone".to_string(),
+                wall_thickness: 1,
+                floor_block: Some("castle_floor".to_string()),
+                roof_block: Some("castle_trim".to_string()),
             },
-            GenerationOp::PlacePrefab {
-                prefab: "oak_tree_small".to_string(),
-                position: [px + 6, crate::config::SEA_LEVEL + 2, pz + 4],
-                rotation: 90,
-                seed: world.seed ^ 303,
+            GenerationOp::HollowBox {
+                min: [px - 18, crate::config::SEA_LEVEL + 2, pz - 18],
+                max: [px + 18, crate::config::SEA_LEVEL + 10, pz + 18],
+                wall_block: "castle_stone".to_string(),
+                wall_thickness: 1,
+                floor_block: Some("castle_floor".to_string()),
+                roof_block: None,
             },
-            GenerationOp::PlacePrefab {
-                prefab: "pine_tree_large".to_string(),
-                position: [px - 6, crate::config::SEA_LEVEL + 2, pz - 4],
-                rotation: 180,
-                seed: world.seed ^ 404,
+            GenerationOp::Cylinder {
+                center: [px - 18, crate::config::SEA_LEVEL + 2, pz - 18],
+                radius: 3,
+                height: 16,
+                block: "castle_trim".to_string(),
+                hollow: true,
+            },
+            GenerationOp::Cylinder {
+                center: [px + 18, crate::config::SEA_LEVEL + 2, pz - 18],
+                radius: 3,
+                height: 16,
+                block: "castle_trim".to_string(),
+                hollow: true,
+            },
+            GenerationOp::Cylinder {
+                center: [px - 18, crate::config::SEA_LEVEL + 2, pz + 18],
+                radius: 3,
+                height: 16,
+                block: "castle_trim".to_string(),
+                hollow: true,
+            },
+            GenerationOp::Cylinder {
+                center: [px + 18, crate::config::SEA_LEVEL + 2, pz + 18],
+                radius: 3,
+                height: 16,
+                block: "castle_trim".to_string(),
+                hollow: true,
             },
         ],
     };

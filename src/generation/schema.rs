@@ -32,4 +32,50 @@ pub enum GenerationOp {
         #[serde(default)]
         seed: u32,
     },
+    FillBox {
+        min: [i32; 3],
+        max: [i32; 3],
+        block: String,
+    },
+    HollowBox {
+        min: [i32; 3],
+        max: [i32; 3],
+        wall_block: String,
+        #[serde(default = "default_wall_thickness")]
+        wall_thickness: i32,
+        #[serde(default)]
+        floor_block: Option<String>,
+        #[serde(default)]
+        roof_block: Option<String>,
+    },
+    Cylinder {
+        center: [i32; 3],
+        radius: i32,
+        height: i32,
+        block: String,
+        #[serde(default)]
+        hollow: bool,
+    },
+    Sphere {
+        center: [i32; 3],
+        radius: i32,
+        block: String,
+        #[serde(default)]
+        hollow: bool,
+    },
+    Line {
+        from: [i32; 3],
+        to: [i32; 3],
+        block: String,
+        #[serde(default = "default_line_thickness")]
+        thickness: i32,
+    },
+}
+
+fn default_wall_thickness() -> i32 {
+    1
+}
+
+fn default_line_thickness() -> i32 {
+    1
 }

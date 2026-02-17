@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
+use bevy::render::view::NoFrustumCulling;
 use rayon::prelude::*;
 
 use crate::config::{
@@ -106,12 +107,15 @@ pub fn stream_chunks_around_camera(
         );
 
         let entity = commands
-            .spawn(MaterialMeshBundle::<VoxelMaterial> {
-                mesh: mesh_handle.clone(),
-                material: material.0.clone(),
-                transform: Transform::from_translation(translation),
-                ..default()
-            })
+            .spawn((
+                MaterialMeshBundle::<VoxelMaterial> {
+                    mesh: mesh_handle.clone(),
+                    material: material.0.clone(),
+                    transform: Transform::from_translation(translation),
+                    ..default()
+                },
+                NoFrustumCulling,
+            ))
             .id();
 
         loaded

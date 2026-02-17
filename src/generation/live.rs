@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::config::WORLD_HEIGHT;
 use crate::generation::schema::{GenerationOp, GenerationRequest};
-use crate::generation::{submit_request, GenerationQueue};
+use crate::generation::{build_structured_plan, submit_request, GenerationQueue};
 use crate::player::FlyCam;
 use crate::world::{get_block_world, Chunk, VoxelWorld};
 
@@ -41,19 +41,14 @@ pub fn toggle_prompt_input_mode(
     mut prompt: ResMut<PromptInputState>,
     mut windows: Query<&mut Window>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyP) {
+    if prompt.active || !keys.just_pressed(KeyCode::KeyP) {
         return;
     }
 
-    prompt.active = !prompt.active;
+    prompt.active = true;
     if let Ok(mut window) = windows.get_single_mut() {
-        if prompt.active {
-            window.cursor.visible = true;
-            window.cursor.grab_mode = CursorGrabMode::None;
-        } else {
-            window.cursor.visible = false;
-            window.cursor.grab_mode = CursorGrabMode::Locked;
-        }
+        window.cursor.visible = true;
+        window.cursor.grab_mode = CursorGrabMode::None;
     }
 }
 
@@ -69,10 +64,6 @@ pub fn edit_prompt_input(
 
     for ev in key_events.read() {
         if ev.state != ButtonState::Pressed {
-            continue;
-        }
-
-        if ev.key_code == KeyCode::KeyP {
             continue;
         }
 
@@ -141,6 +132,7 @@ pub fn trigger_live_llm_generation_on_key(
     keys: Res<ButtonInput<KeyCode>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     world: Res<VoxelWorld>,
+    mut queue: ResMut<GenerationQueue>,
     mut state: ResMut<LiveLlmState>,
     mut prompt: ResMut<PromptInputState>,
 ) {
@@ -170,6 +162,20 @@ pub fn trigger_live_llm_generation_on_key(
         prompt.buffer.clone()
     };
 
+    if let Some(req) = build_structured_plan(
+        &user_prompt,
+        [anchor.x, anchor.y, anchor.z],
+        world.seed,
+    ) {
+        let mut req = req;
+        align_request_base_to_y(&mut req, anchor.y);
+        match submit_request(req, &world, &mut queue) {
+            Ok(()) => info!("queued local structured generation plan"),
+            Err(e) => warn!("local structured generation rejected: {e}"),
+        }
+        return;
+    }
+
     let api_key = match env::var("OPENAI_API_KEY") {
         Ok(v) if !v.is_empty() => v,
         _ => {
@@ -190,19 +196,7 @@ pub fn trigger_live_llm_generation_on_key(
         anchor.z
     );
 
-    let schema_hint = r#"Return ONLY valid JSON matching this shape:
-{
-  "version":"1",
-  "request_id":"string",
-  "source":"llm_live",
-  "ops":[
-                    {"type":"place_block","position":[x,y,z],"block":"grass|dirt|stone|sand|snow|wood|leaves|red|blue|yellow|purple|cyan"},
-                    {"type":"place_prefab","prefab":"oak_tree_small|pine_tree_large|stone_ring","position":[x,y,z],"rotation":0,"seed":0},
-                    {"type":"paint_region","shape":"circle","center":[x,z],"radius":12,"surface_block":"grass|dirt|stone|sand|snow|wood|leaves|red|blue|yellow|purple|cyan","seed":0}
-                ]
-}
-All coordinates must be local offsets near origin (around -32..32), not absolute world coordinates.
-No markdown fences. No explanation text."#;
+    let schema_hint = build_schema_hint(&user_prompt);
 
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
     state.in_flight = true;
@@ -283,6 +277,7 @@ pub fn poll_live_llm_result(
                 }
             };
             apply_anchor_to_request(&mut req, anchor);
+            align_request_base_to_y(&mut req, anchor.y);
             match submit_request(req, &world, &mut queue) {
                 Ok(()) => info!("queued LLM generation plan"),
                 Err(e) => warn!("LLM plan rejected: {e}"),
@@ -352,6 +347,104 @@ fn apply_anchor_to_request(req: &mut GenerationRequest, anchor: IVec3) {
                 center[0] += anchor.x;
                 center[1] += anchor.z;
             }
+            GenerationOp::FillBox { min, max, .. } => {
+                min[0] += anchor.x;
+                min[1] += anchor.y;
+                min[2] += anchor.z;
+                max[0] += anchor.x;
+                max[1] += anchor.y;
+                max[2] += anchor.z;
+            }
+            GenerationOp::HollowBox { min, max, .. } => {
+                min[0] += anchor.x;
+                min[1] += anchor.y;
+                min[2] += anchor.z;
+                max[0] += anchor.x;
+                max[1] += anchor.y;
+                max[2] += anchor.z;
+            }
+            GenerationOp::Cylinder { center, .. } => {
+                center[0] += anchor.x;
+                center[1] += anchor.y;
+                center[2] += anchor.z;
+            }
+            GenerationOp::Sphere { center, .. } => {
+                center[0] += anchor.x;
+                center[1] += anchor.y;
+                center[2] += anchor.z;
+            }
+            GenerationOp::Line { from, to, .. } => {
+                from[0] += anchor.x;
+                from[1] += anchor.y;
+                from[2] += anchor.z;
+                to[0] += anchor.x;
+                to[1] += anchor.y;
+                to[2] += anchor.z;
+            }
+        }
+    }
+}
+
+fn align_request_base_to_y(req: &mut GenerationRequest, target_base_y: i32) {
+    let Some(min_y) = request_min_y(req) else {
+        return;
+    };
+    let dy = target_base_y - min_y;
+    if dy == 0 {
+        return;
+    }
+    shift_request_y(req, dy);
+}
+
+fn request_min_y(req: &GenerationRequest) -> Option<i32> {
+    let mut min_y: Option<i32> = None;
+    for op in &req.ops {
+        let y = match op {
+            GenerationOp::PlaceBlock { position, .. } => position[1],
+            GenerationOp::PlacePrefab { position, .. } => position[1],
+            GenerationOp::PaintRegion { .. } => continue,
+            GenerationOp::FillBox { min, max, .. } => min[1].min(max[1]),
+            GenerationOp::HollowBox { min, max, .. } => min[1].min(max[1]),
+            GenerationOp::Cylinder { center, .. } => center[1],
+            GenerationOp::Sphere { center, radius, .. } => center[1] - *radius,
+            GenerationOp::Line { from, to, .. } => from[1].min(to[1]),
+        };
+        min_y = Some(match min_y {
+            Some(current) => current.min(y),
+            None => y,
+        });
+    }
+    min_y
+}
+
+fn shift_request_y(req: &mut GenerationRequest, dy: i32) {
+    for op in &mut req.ops {
+        match op {
+            GenerationOp::PlaceBlock { position, .. } => {
+                position[1] += dy;
+            }
+            GenerationOp::PlacePrefab { position, .. } => {
+                position[1] += dy;
+            }
+            GenerationOp::PaintRegion { .. } => {}
+            GenerationOp::FillBox { min, max, .. } => {
+                min[1] += dy;
+                max[1] += dy;
+            }
+            GenerationOp::HollowBox { min, max, .. } => {
+                min[1] += dy;
+                max[1] += dy;
+            }
+            GenerationOp::Cylinder { center, .. } => {
+                center[1] += dy;
+            }
+            GenerationOp::Sphere { center, .. } => {
+                center[1] += dy;
+            }
+            GenerationOp::Line { from, to, .. } => {
+                from[1] += dy;
+                to[1] += dy;
+            }
         }
     }
 }
@@ -403,4 +496,77 @@ fn raycast_previous_air(
     }
 
     None
+}
+
+fn build_schema_hint(user_prompt: &str) -> String {
+    let lower = user_prompt.to_lowercase();
+    let architecture = contains_any(
+        &lower,
+        &["castle", "fortress", "tower", "keep", "wall", "gatehouse", "citadel"],
+    );
+    let character_art = contains_any(
+        &lower,
+        &[
+            "homer",
+            "simpson",
+            "character",
+            "person",
+            "face",
+            "statue",
+            "pixel art",
+            "mascot",
+            "logo",
+        ],
+    );
+    let spooky = contains_any(&lower, &["haunted", "spooky", "ghost", "horror"]);
+    let scifi = contains_any(&lower, &["spaceship", "space ship", "ufo", "alien", "starship"]);
+
+    let mut base = String::from(
+        r#"Return ONLY valid JSON matching this shape:
+{
+  "version":"1",
+  "request_id":"string",
+  "source":"llm_live",
+  "ops":[
+    {"type":"fill_box","min":[x,y,z],"max":[x,y,z],"block":"castle_stone|castle_trim|castle_floor|roof_dark|grass|dirt|stone|sand|snow|wood|leaves|red|blue|yellow|purple|cyan"},
+    {"type":"hollow_box","min":[x,y,z],"max":[x,y,z],"wall_block":"castle_stone","wall_thickness":1,"floor_block":"castle_floor","roof_block":"roof_dark"},
+    {"type":"cylinder","center":[x,y,z],"radius":4,"height":18,"block":"castle_stone","hollow":true},
+    {"type":"sphere","center":[x,y,z],"radius":6,"block":"stone|snow|red|blue|yellow|purple|cyan","hollow":false},
+    {"type":"line","from":[x,y,z],"to":[x,y,z],"block":"stone|wood|red|blue|yellow|purple|cyan","thickness":1},
+    {"type":"paint_region","shape":"circle","center":[x,z],"radius":12,"surface_block":"grass|dirt|stone|sand|snow|wood|leaves|red|blue|yellow|purple|cyan","seed":0},
+    {"type":"place_prefab","prefab":"oak_tree_small|pine_tree_large|stone_ring","position":[x,y,z],"rotation":0,"seed":0},
+    {"type":"place_block","position":[x,y,z],"block":"red|blue|yellow|purple|cyan|stone"}
+  ]
+}
+All coordinates must be local offsets near origin (around -32..32), not absolute world coordinates.
+No markdown fences. No explanation text."#,
+    );
+
+    if architecture {
+        base.push_str(
+            "\nArchitecture mode: use 6-18 ops with hollow_box + cylinder composition (keep, towers, walls, gate).",
+        );
+    } else if character_art {
+        base.push_str(
+            "\nCharacter-art mode: do NOT build castles/walled compounds. Build one medium sculpture using colorful blocks with fill_box/place_block/cylinder, roughly 10-24 blocks tall.",
+        );
+    } else if spooky {
+        base.push_str(
+            "\nSpooky mode: prefer asymmetrical haunted architecture with dark materials (stone/roof_dark/wood), tall silhouettes, and eerie accent colors (purple/cyan).",
+        );
+    } else if scifi {
+        base.push_str(
+            "\nSci-fi mode: prefer spaceship/UFO forms using spheres, cylinders, and lines; include a hull, cockpit dome, and landing supports.",
+        );
+    } else {
+        base.push_str(
+            "\nGeneral mode: choose ops that best match the request and avoid unrelated motifs.",
+        );
+    }
+
+    base
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| haystack.contains(n))
 }
