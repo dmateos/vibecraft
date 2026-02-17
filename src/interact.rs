@@ -1,6 +1,8 @@
 use bevy::prelude::*;
+use bevy::input::mouse::MouseWheel;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
+use crate::generation::PromptInputState;
 use crate::player::{collides_player, FlyCam};
 use crate::world::{
     div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
@@ -12,13 +14,86 @@ struct BlockHit {
     previous_air: IVec3,
 }
 
+#[derive(Resource)]
+pub struct PlacementPalette {
+    blocks: Vec<(Block, &'static str)>,
+    index: usize,
+}
+
+impl Default for PlacementPalette {
+    fn default() -> Self {
+        Self {
+            blocks: vec![
+                (Block::Stone, "Stone"),
+                (Block::Dirt, "Dirt"),
+                (Block::Grass, "Grass"),
+                (Block::Sand, "Sand"),
+                (Block::Wood, "Wood"),
+                (Block::Leaves, "Leaves"),
+                (Block::Red, "Red"),
+                (Block::Blue, "Blue"),
+                (Block::Yellow, "Yellow"),
+                (Block::Purple, "Purple"),
+                (Block::Cyan, "Cyan"),
+            ],
+            index: 0,
+        }
+    }
+}
+
+impl PlacementPalette {
+    pub fn selected_name(&self) -> &'static str {
+        self.blocks[self.index].1
+    }
+    pub fn selected_block(&self) -> Block {
+        self.blocks[self.index].0
+    }
+    pub fn selected_index(&self) -> usize {
+        self.index
+    }
+    pub fn len(&self) -> usize {
+        self.blocks.len()
+    }
+}
+
+pub fn cycle_palette_on_scroll(
+    mut scroll: EventReader<MouseWheel>,
+    mut palette: ResMut<PlacementPalette>,
+    prompt: Res<PromptInputState>,
+) {
+    if prompt.active {
+        scroll.clear();
+        return;
+    }
+
+    let mut delta = 0.0f32;
+    for e in scroll.read() {
+        delta += e.y;
+    }
+    if delta == 0.0 {
+        return;
+    }
+
+    if delta > 0.0 {
+        palette.index = (palette.index + 1) % palette.blocks.len();
+    } else if palette.index == 0 {
+        palette.index = palette.blocks.len() - 1;
+    } else {
+        palette.index -= 1;
+    }
+}
+
 pub fn break_targeted_block(
     buttons: Res<ButtonInput<MouseButton>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
+    prompt: Res<PromptInputState>,
 ) {
+    if prompt.active {
+        return;
+    }
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
@@ -42,7 +117,12 @@ pub fn place_targeted_block(
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
+    palette: Res<PlacementPalette>,
+    prompt: Res<PromptInputState>,
 ) {
+    if prompt.active {
+        return;
+    }
     if !buttons.just_pressed(MouseButton::Right) {
         return;
     }
@@ -70,7 +150,7 @@ pub fn place_targeted_block(
         hit.previous_air.x,
         hit.previous_air.y,
         hit.previous_air.z,
-        Block::Stone,
+        palette.selected_block(),
     ) {
         return;
     }

@@ -1,5 +1,6 @@
 mod clouds;
 mod config;
+mod generation;
 mod interact;
 mod materials;
 mod player;
@@ -18,7 +19,7 @@ use bevy::window::CursorGrabMode;
 use config::SEA_LEVEL;
 use materials::{TerrainMaterial, VoxelMaterial, VoxelMaterialParams};
 use player::FlyCam;
-use world::{LoadedChunks, StreamTimer, VoxelWorld};
+use world::{LoadedChunks, StreamTimer, TerrainMode, VoxelWorld};
 
 fn main() {
     App::new()
@@ -32,6 +33,7 @@ fn main() {
             seed: 1337,
             chunks: HashMap::new(),
         })
+        .insert_resource(TerrainMode::Procedural)
         .insert_resource(LoadedChunks::default())
         .insert_resource(StreamTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
         .insert_resource(clouds::LoadedClouds::default())
@@ -44,6 +46,11 @@ fn main() {
             0.08,
             TimerMode::Repeating,
         )))
+        .insert_resource(generation::GenerationConfig::default())
+        .insert_resource(generation::GenerationQueue::default())
+        .insert_resource(generation::LiveLlmState::default())
+        .insert_resource(generation::PromptInputState::default())
+        .insert_resource(interact::PlacementPalette::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "VibeCraft".to_string(),
@@ -56,21 +63,44 @@ fn main() {
         .add_plugins(water::water_material_plugin())
         .add_systems(
             Startup,
-            (setup, clouds::setup_clouds, water::setup_water, ui::spawn_crosshair),
+            (
+                setup,
+                clouds::setup_clouds,
+                water::setup_water,
+                generation::initialize_prompt_input,
+                ui::spawn_crosshair,
+                ui::spawn_hud,
+            ),
         )
         .add_systems(
             Update,
             (
                 player::camera_look,
                 player::player_move_and_collision,
+                interact::cycle_palette_on_scroll,
                 interact::break_targeted_block,
                 interact::place_targeted_block,
                 streaming::stream_chunks_around_camera,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
                 clouds::animate_clouds,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
                 interact::highlight_targeted_block,
+                generation::trigger_demo_generation_on_key,
+                generation::load_generation_request_on_key,
+                generation::toggle_prompt_input_mode,
+                generation::edit_prompt_input,
+                generation::trigger_live_llm_generation_on_key,
+                generation::poll_live_llm_result,
+                generation::update_prompt_window_title,
+                generation::process_generation_queue,
                 regenerate_world_on_key,
+                toggle_terrain_mode_on_key,
+                ui::update_hud_text,
             ),
         )
         .run();
@@ -132,8 +162,12 @@ fn regenerate_world_on_key(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
     mut loaded_water: ResMut<water::LoadedWater>,
+    prompt: Res<generation::PromptInputState>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyR) {
+    if prompt.active {
+        return;
+    }
+    if !(keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::F5)) {
         return;
     }
 
@@ -145,9 +179,41 @@ fn regenerate_world_on_key(
     if new_seed == 0 {
         new_seed = 1;
     }
+    info!("reseeding world: {} -> {}", world.seed, new_seed);
     world.seed = new_seed;
     world.chunks.clear();
 
+    let chunk_entities: Vec<Entity> = loaded_chunks.entries.values().map(|c| c.entity).collect();
+    loaded_chunks.entries.clear();
+    for entity in chunk_entities {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    loaded_clouds.clear_and_despawn(&mut commands);
+    loaded_water.clear_and_despawn(&mut commands);
+}
+
+fn toggle_terrain_mode_on_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut terrain_mode: ResMut<TerrainMode>,
+    mut world: ResMut<VoxelWorld>,
+    mut loaded_chunks: ResMut<LoadedChunks>,
+    mut loaded_clouds: ResMut<clouds::LoadedClouds>,
+    mut loaded_water: ResMut<water::LoadedWater>,
+    prompt: Res<generation::PromptInputState>,
+) {
+    if prompt.active {
+        return;
+    }
+    if !keys.just_pressed(KeyCode::F6) {
+        return;
+    }
+
+    *terrain_mode = terrain_mode.toggled();
+    info!("terrain mode switched to {}", terrain_mode.label());
+
+    world.chunks.clear();
     let chunk_entities: Vec<Entity> = loaded_chunks.entries.values().map(|c| c.entity).collect();
     loaded_chunks.entries.clear();
     for entity in chunk_entities {

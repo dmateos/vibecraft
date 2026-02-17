@@ -8,7 +8,7 @@ use noise::{NoiseFn, Perlin};
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Block {
     Air,
     Grass,
@@ -18,6 +18,11 @@ pub enum Block {
     Snow,
     Wood,
     Leaves,
+    Red,
+    Blue,
+    Yellow,
+    Purple,
+    Cyan,
 }
 
 #[derive(Clone)]
@@ -57,6 +62,28 @@ pub struct VoxelWorld {
     pub chunks: HashMap<IVec2, Chunk>,
 }
 
+#[derive(Resource, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TerrainMode {
+    Procedural,
+    Flat,
+}
+
+impl TerrainMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            TerrainMode::Procedural => "Procedural",
+            TerrainMode::Flat => "Flat",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            TerrainMode::Procedural => TerrainMode::Flat,
+            TerrainMode::Flat => TerrainMode::Procedural,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ChunkRender {
     pub entity: Entity,
@@ -71,7 +98,11 @@ pub struct LoadedChunks {
 #[derive(Resource)]
 pub struct StreamTimer(pub Timer);
 
-pub fn generate_chunk(pos: IVec2, seed: u32) -> Chunk {
+pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
+    if mode == TerrainMode::Flat {
+        return generate_flat_chunk(pos);
+    }
+
     let mut chunk = Chunk::new(pos);
     let noise = TerrainNoise::new(seed);
 
@@ -131,6 +162,30 @@ pub fn generate_chunk(pos: IVec2, seed: u32) -> Chunk {
     }
 
     stamp_trees(&mut chunk, &noise);
+    chunk
+}
+
+fn generate_flat_chunk(pos: IVec2) -> Chunk {
+    let mut chunk = Chunk::new(pos);
+    let surface = SEA_LEVEL + 1;
+    let dirt_depth = 4;
+
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            for y in 0..=surface {
+                let yi = y as i32;
+                let block = if yi == surface {
+                    Block::Grass
+                } else if yi >= surface - dirt_depth {
+                    Block::Dirt
+                } else {
+                    Block::Stone
+                };
+                chunk.set_local(x, y as usize, z, block);
+            }
+        }
+    }
+
     chunk
 }
 
@@ -315,6 +370,11 @@ fn block_color(block: Block) -> [f32; 4] {
         Block::Snow => [0.88, 0.91, 0.95, 1.0],
         Block::Wood => [0.41, 0.30, 0.18, 1.0],
         Block::Leaves => [0.20, 0.46, 0.21, 1.0],
+        Block::Red => [0.84, 0.20, 0.20, 1.0],
+        Block::Blue => [0.20, 0.34, 0.84, 1.0],
+        Block::Yellow => [0.90, 0.82, 0.20, 1.0],
+        Block::Purple => [0.58, 0.30, 0.82, 1.0],
+        Block::Cyan => [0.20, 0.74, 0.78, 1.0],
     }
 }
 

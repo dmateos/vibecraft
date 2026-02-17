@@ -8,6 +8,7 @@ use crate::config::{
     EYE_HEIGHT, GRAVITY, JUMP_SPEED, PLAYER_HEIGHT, PLAYER_RADIUS, SPRINT_MULTIPLIER, STEP_HEIGHT,
     WALK_SPEED,
 };
+use crate::generation::PromptInputState;
 use crate::world::{get_block_world, Chunk, VoxelWorld};
 
 #[derive(Component)]
@@ -26,7 +27,13 @@ pub fn camera_look(
     mut q: Query<(&mut Transform, &mut FlyCam)>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    prompt: Res<PromptInputState>,
 ) {
+    if prompt.active {
+        motion.clear();
+        return;
+    }
+
     let Ok((mut transform, mut cam)) = q.get_single_mut() else {
         return;
     };
@@ -72,7 +79,12 @@ pub fn player_move_and_collision(
     time: Res<Time>,
     world: Res<VoxelWorld>,
     mut q: Query<(&mut Transform, &mut FlyCam)>,
+    prompt: Res<PromptInputState>,
 ) {
+    if prompt.active {
+        return;
+    }
+
     let Ok((mut transform, mut cam)) = q.get_single_mut() else {
         return;
     };

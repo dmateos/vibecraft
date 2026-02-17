@@ -10,7 +10,7 @@ use crate::materials::{TerrainMaterial, VoxelMaterial};
 use crate::player::FlyCam;
 use crate::world::{
     build_chunk_mesh, chunk_distance_sq, div_floor, generate_chunk, ChunkRender, LoadedChunks, StreamTimer,
-    VoxelWorld,
+    TerrainMode, VoxelWorld,
 };
 
 pub fn stream_chunks_around_camera(
@@ -18,6 +18,7 @@ pub fn stream_chunks_around_camera(
     time: Res<Time>,
     mut timer: ResMut<StreamTimer>,
     mut world: ResMut<VoxelWorld>,
+    terrain_mode: Res<TerrainMode>,
     mut loaded: ResMut<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<TerrainMaterial>,
@@ -66,9 +67,10 @@ pub fn stream_chunks_around_camera(
 
     if !to_generate.is_empty() {
         let seed = world.seed;
+        let mode = *terrain_mode;
         let generated = to_generate
             .par_iter()
-            .map(|pos| generate_chunk(*pos, seed))
+            .map(|pos| generate_chunk(*pos, seed, mode))
             .collect::<Vec<_>>();
 
         for chunk in generated {
