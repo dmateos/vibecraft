@@ -14,12 +14,16 @@ pub struct VoxelMaterialParams {
     pub fog_color: Vec4,
     pub fog_distances: Vec4,
     pub ao: Vec4,
+    pub weather: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct VoxelMaterial {
     #[uniform(0)]
     pub params: VoxelMaterialParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub atlas: Handle<Image>,
 }
 
 impl Material for VoxelMaterial {

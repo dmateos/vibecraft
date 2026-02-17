@@ -1,0 +1,15 @@
+Generate a voxel structure plan near the suggested anchor.
+Rules:
+- Return only strict JSON compatible with the generation schema.
+- Use LOCAL coordinates around origin (roughly -32..32).
+- Prefer structural ops for buildings:
+  - hollow_box for keeps/halls
+  - cylinder for towers
+  - fill_box for ramps, battlements, and gate frames
+- Keep plans medium complexity (6-18 ops).
+- Use material tokens for style coherence:
+  - castle_stone, castle_trim, castle_floor, roof_dark
+- If prompt asks for castle/fortress, include:
+  - central keep
+  - perimeter wall
+  - at least 2 towers

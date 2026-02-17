@@ -16,7 +16,9 @@ use crate::generation::validator::validate_request;
 use crate::player::FlyCam;
 use crate::world::VoxelWorld;
 
-pub use executor::{process_generation_queue, GenerationConfig, GenerationQueue};
+pub use executor::{
+    process_generation_queue, GenerationConfig, GenerationQueue, GenerationRuntimeStats,
+};
 pub use live::{
     edit_prompt_input, initialize_prompt_input, poll_live_llm_result, toggle_prompt_input_mode,
     trigger_live_llm_generation_on_key, update_prompt_window_title, LiveLlmState, PromptInputState,

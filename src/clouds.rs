@@ -8,6 +8,7 @@ use bevy::render::render_resource::PrimitiveTopology;
 use noise::{NoiseFn, Perlin};
 
 use crate::player::FlyCam;
+use crate::weather::WeatherState;
 use crate::world::{chunk_distance_sq, div_floor, VoxelWorld};
 
 const CLOUD_CELL_SIZE: f32 = 4.0;
@@ -147,15 +148,22 @@ pub fn stream_clouds_around_camera(
     }
 }
 
-pub fn animate_clouds(time: Res<Time>, mut q: Query<(&CloudChunk, &mut Transform)>) {
+pub fn animate_clouds(
+    time: Res<Time>,
+    weather: Res<WeatherState>,
+    mut q: Query<(&CloudChunk, &mut Transform)>,
+) {
     let t = time.elapsed_seconds_wrapped();
-    let drift = CLOUD_DRIFT_SPEED * t;
+    let wind = 1.0 + weather.rain_factor() * 0.7;
+    let drift = CLOUD_DRIFT_SPEED * t * wind;
     let chunk_size = CLOUD_CHUNK_CELLS as f32 * CLOUD_CELL_SIZE;
 
     for (chunk, mut transform) in &mut q {
         transform.translation = Vec3::new(
             chunk.pos.x as f32 * chunk_size + drift.x,
-            CLOUD_LAYER_Y + (t * 0.27 + (chunk.pos.x ^ chunk.pos.y) as f32 * 0.11).sin() * 0.55,
+            CLOUD_LAYER_Y
+                + (t * 0.27 * wind + (chunk.pos.x ^ chunk.pos.y) as f32 * 0.11).sin()
+                    * (0.55 + weather.rain_factor() * 0.18),
             chunk.pos.y as f32 * chunk_size + drift.y,
         );
     }

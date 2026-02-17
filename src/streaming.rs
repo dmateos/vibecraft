@@ -14,6 +14,13 @@ use crate::world::{
     TerrainMode, VoxelWorld,
 };
 
+#[derive(Resource, Default)]
+pub struct StreamingRuntimeStats {
+    pub desired_chunks: usize,
+    pub generated_last_tick: usize,
+    pub meshed_last_tick: usize,
+}
+
 pub fn stream_chunks_around_camera(
     mut commands: Commands,
     time: Res<Time>,
@@ -21,6 +28,7 @@ pub fn stream_chunks_around_camera(
     mut world: ResMut<VoxelWorld>,
     terrain_mode: Res<TerrainMode>,
     mut loaded: ResMut<LoadedChunks>,
+    mut stats: ResMut<StreamingRuntimeStats>,
     mut meshes: ResMut<Assets<Mesh>>,
     material: Res<TerrainMaterial>,
     cam_q: Query<&Transform, With<FlyCam>>,
@@ -47,6 +55,7 @@ pub fn stream_chunks_around_camera(
             desired.insert(IVec2::new(cam_chunk.x + dx, cam_chunk.y + dz));
         }
     }
+    stats.desired_chunks = desired.len();
 
     let loaded_positions: Vec<IVec2> = loaded.entries.keys().copied().collect();
     for pos in loaded_positions {
@@ -65,6 +74,7 @@ pub fn stream_chunks_around_camera(
         .collect();
     to_generate.sort_by_key(|pos| chunk_distance_sq(*pos, cam_chunk));
     to_generate.truncate(MAX_CHUNKS_GENERATED_PER_TICK);
+    stats.generated_last_tick = to_generate.len();
 
     if !to_generate.is_empty() {
         let seed = world.seed;
@@ -87,6 +97,7 @@ pub fn stream_chunks_around_camera(
         .collect();
     to_spawn.sort_by_key(|pos| chunk_distance_sq(*pos, cam_chunk));
     to_spawn.truncate(MAX_CHUNKS_MESHED_PER_TICK);
+    stats.meshed_last_tick = to_spawn.len();
 
     if to_spawn.is_empty() {
         return;

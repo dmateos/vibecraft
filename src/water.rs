@@ -11,7 +11,7 @@ use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, S
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, VIEW_DISTANCE_CHUNKS};
 use crate::player::FlyCam;
-use crate::world::{chunk_distance_sq, div_floor};
+use crate::world::{chunk_distance_sq, div_floor, get_block_world, Block, Chunk, VoxelWorld};
 
 const MAX_WATER_CHUNKS_PER_TICK: usize = 24;
 
@@ -21,6 +21,7 @@ pub struct WaterMaterialParams {
     pub deep_color: Vec4,
     pub wave: Vec4,
     pub foam: Vec4,
+    pub weather: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
@@ -41,9 +42,6 @@ impl Material for WaterSurfaceMaterial {
 
 #[derive(Resource)]
 pub struct WaterMaterial(pub Handle<WaterSurfaceMaterial>);
-
-#[derive(Resource)]
-pub struct WaterMesh(pub Handle<Mesh>);
 
 #[derive(Clone)]
 struct WaterRender {
@@ -75,20 +73,18 @@ pub fn water_material_plugin() -> MaterialPlugin<WaterSurfaceMaterial> {
 pub fn setup_water(
     mut commands: Commands,
     mut materials: ResMut<Assets<WaterSurfaceMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let material = materials.add(WaterSurfaceMaterial {
         params: WaterMaterialParams {
-            shallow_color: Vec4::new(0.18, 0.50, 0.80, 0.88),
-            deep_color: Vec4::new(0.04, 0.16, 0.31, 0.94),
-            wave: Vec4::new(0.065, 2.4, 0.9, 0.5),
-            foam: Vec4::new(0.12, 0.0, 0.0, 0.0),
+            shallow_color: Vec4::new(0.20, 0.62, 0.92, 0.90),
+            deep_color: Vec4::new(0.02, 0.10, 0.24, 0.95),
+            wave: Vec4::new(0.085, 2.9, 1.25, 0.5),
+            foam: Vec4::new(0.30, 0.0, 0.0, 0.0),
+            weather: Vec4::ZERO,
         },
     });
 
-    let mesh = meshes.add(build_water_mesh());
     commands.insert_resource(WaterMaterial(material));
-    commands.insert_resource(WaterMesh(mesh));
 }
 
 pub fn stream_water_around_camera(
@@ -96,7 +92,8 @@ pub fn stream_water_around_camera(
     time: Res<Time>,
     mut timer: ResMut<WaterStreamTimer>,
     mut loaded: ResMut<LoadedWater>,
-    water_mesh: Res<WaterMesh>,
+    world: Res<VoxelWorld>,
+    mut meshes: ResMut<Assets<Mesh>>,
     water_material: Res<WaterMaterial>,
     cam_q: Query<&Transform, With<FlyCam>>,
 ) {
@@ -141,6 +138,7 @@ pub fn stream_water_around_camera(
     to_spawn.truncate(MAX_WATER_CHUNKS_PER_TICK);
 
     for pos in to_spawn {
+        let mesh_handle = meshes.add(build_water_mesh_for_chunk(pos, &world.chunks));
         let translation = Vec3::new(
             (pos.x * CHUNK_SIZE as i32) as f32,
             SEA_LEVEL as f32 + 0.08,
@@ -150,7 +148,7 @@ pub fn stream_water_around_camera(
         let entity = commands
             .spawn((
                 MaterialMeshBundle::<WaterSurfaceMaterial> {
-                    mesh: water_mesh.0.clone(),
+                    mesh: mesh_handle,
                     material: water_material.0.clone(),
                     transform: Transform::from_translation(translation),
                     ..default()
@@ -163,11 +161,45 @@ pub fn stream_water_around_camera(
     }
 }
 
-fn build_water_mesh() -> Mesh {
+fn build_water_mesh_for_chunk(
+    pos: IVec2,
+    chunks: &std::collections::HashMap<IVec2, Chunk>,
+) -> Mesh {
+    const DIVS: usize = 12;
     let size = CHUNK_SIZE as f32;
-    let positions = vec![[0.0, 0.0, 0.0], [size, 0.0, 0.0], [size, 0.0, size], [0.0, 0.0, size]];
-    let normals = vec![[0.0, 1.0, 0.0]; 4];
-    let indices = vec![0_u32, 2, 1, 0, 3, 2];
+    let step = size / DIVS as f32;
+    let base_x = pos.x * CHUNK_SIZE as i32;
+    let base_z = pos.y * CHUNK_SIZE as i32;
+
+    let mut positions = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
+    let mut normals = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
+    let mut colors = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
+    let mut indices = Vec::with_capacity(DIVS * DIVS * 6);
+
+    for gz in 0..=DIVS {
+        for gx in 0..=DIVS {
+            let lx = gx as f32 * step;
+            let lz = gz as f32 * step;
+            positions.push([lx, 0.0, lz]);
+            normals.push([0.0, 1.0, 0.0]);
+
+            let wx = base_x + lx.round() as i32;
+            let wz = base_z + lz.round() as i32;
+            let surface = find_surface_y(chunks, wx, wz);
+            let depth = ((SEA_LEVEL - surface) as f32 / 24.0).clamp(0.0, 1.0);
+            colors.push([depth, 0.0, 0.0, 1.0]);
+        }
+    }
+
+    for z in 0..DIVS {
+        for x in 0..DIVS {
+            let i0 = (z * (DIVS + 1) + x) as u32;
+            let i1 = i0 + 1;
+            let i2 = i0 + (DIVS + 1) as u32;
+            let i3 = i2 + 1;
+            indices.extend_from_slice(&[i0, i3, i1, i0, i2, i3]);
+        }
+    }
 
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -176,5 +208,16 @@ fn build_water_mesh() -> Mesh {
     mesh.insert_indices(Indices::U32(indices));
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh
+}
+
+fn find_surface_y(chunks: &std::collections::HashMap<IVec2, Chunk>, x: i32, z: i32) -> i32 {
+    for y in (0..=SEA_LEVEL + 24).rev() {
+        let b = get_block_world(chunks, x, y, z);
+        if b != Block::Air && b != Block::Leaves {
+            return y;
+        }
+    }
+    0
 }

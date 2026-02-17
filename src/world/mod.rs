@@ -192,6 +192,7 @@ fn generate_flat_chunk(pos: IVec2) -> Chunk {
 pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
 
@@ -226,9 +227,10 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
                     }
 
                     let start = positions.len() as u32;
-                    let color = block_color(block);
+                    let tint = block_tint(block);
+                    let tex_id = block_face_texture_id(block, face) as f32;
 
-                    for v in face.verts {
+                    for (vidx, v) in face.verts.into_iter().enumerate() {
                         positions.push([
                             x as f32 + v[0],
                             y as f32 + v[1],
@@ -239,7 +241,17 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
                             face.normal[1] as f32,
                             face.normal[2] as f32,
                         ]);
-                        colors.push(color);
+                        uvs.push(face.uvs[vidx]);
+                        let ao = face_vertex_ao(
+                            chunks,
+                            wx,
+                            wy,
+                            wz,
+                            face,
+                            vidx,
+                        );
+                        let ao_packed = ao.clamp(0.0, 0.999);
+                        colors.push([tint[0], tint[1], tint[2], tex_id + ao_packed]);
                     }
 
                     indices.extend_from_slice(&[
@@ -262,6 +274,7 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
     mesh.insert_indices(Indices::U32(indices));
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh
 }
@@ -274,6 +287,7 @@ fn empty_mesh() -> Mesh {
     mesh.insert_indices(Indices::U32(Vec::new()));
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new());
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
     mesh
 }
@@ -360,22 +374,111 @@ pub fn chunk_distance_sq(a: IVec2, b: IVec2) -> i32 {
     d.x * d.x + d.y * d.y
 }
 
-fn block_color(block: Block) -> [f32; 4] {
+fn block_tint(block: Block) -> [f32; 3] {
     match block {
-        Block::Air => [0.0, 0.0, 0.0, 0.0],
-        Block::Grass => [0.24, 0.68, 0.25, 1.0],
-        Block::Dirt => [0.44, 0.31, 0.18, 1.0],
-        Block::Stone => [0.48, 0.48, 0.52, 1.0],
-        Block::Sand => [0.83, 0.77, 0.53, 1.0],
-        Block::Snow => [0.88, 0.91, 0.95, 1.0],
-        Block::Wood => [0.41, 0.30, 0.18, 1.0],
-        Block::Leaves => [0.20, 0.46, 0.21, 1.0],
-        Block::Red => [0.84, 0.20, 0.20, 1.0],
-        Block::Blue => [0.20, 0.34, 0.84, 1.0],
-        Block::Yellow => [0.90, 0.82, 0.20, 1.0],
-        Block::Purple => [0.58, 0.30, 0.82, 1.0],
-        Block::Cyan => [0.20, 0.74, 0.78, 1.0],
+        Block::Air => [1.0, 1.0, 1.0],
+        Block::Grass
+        | Block::Dirt
+        | Block::Stone
+        | Block::Sand
+        | Block::Snow
+        | Block::Wood
+        | Block::Leaves => [1.0, 1.0, 1.0],
+        Block::Red => [0.98, 0.28, 0.30],
+        Block::Blue => [0.26, 0.40, 0.96],
+        Block::Yellow => [0.96, 0.86, 0.24],
+        Block::Purple => [0.70, 0.38, 0.96],
+        Block::Cyan => [0.30, 0.88, 0.92],
     }
+}
+
+fn block_face_texture_id(block: Block, face: Face) -> u32 {
+    // Atlas is 9x10 tiles (1152x1280) with 128x128 cells.
+    // tile_id = row * 9 + col
+    const COLS: u32 = 9;
+    let tile = |col: u32, row: u32| row * COLS + col;
+    match block {
+        Block::Grass => {
+            if face.normal[1] > 0 {
+                tile(6, 1) // grass_top
+            } else if face.normal[1] < 0 {
+                tile(7, 5) // dirt
+            } else {
+                tile(7, 4) // dirt_grass
+            }
+        }
+        Block::Dirt => tile(7, 5),  // dirt
+        Block::Stone => tile(3, 4), // stone
+        Block::Sand => tile(3, 6),  // sand
+        Block::Snow => {
+            if face.normal[1] > 0 {
+                tile(3, 5) // snow
+            } else if face.normal[1] < 0 {
+                tile(7, 5) // dirt
+            } else {
+                tile(7, 2) // dirt_snow
+            }
+        }
+        Block::Wood => {
+            if face.normal[1] > 0 {
+                tile(0, 9) // trunk_top
+            } else if face.normal[1] < 0 {
+                tile(1, 2) // trunk_bottom
+            } else {
+                tile(1, 0) // trunk_side
+            }
+        }
+        Block::Leaves => tile(5, 1), // leaves
+        Block::Red | Block::Blue | Block::Yellow | Block::Purple | Block::Cyan => tile(3, 4),
+        Block::Air => tile(3, 4),
+    }
+}
+
+fn face_vertex_ao(
+    chunks: &HashMap<IVec2, Chunk>,
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    face: Face,
+    vidx: usize,
+) -> f32 {
+    let n = face.normal;
+    let su = face.ao_signs[vidx][0];
+    let sv = face.ao_signs[vidx][1];
+    let u = face.u_axis;
+    let v = face.v_axis;
+
+    let s1 = is_occluding(get_block_world(
+        chunks,
+        wx + n[0] + u[0] * su,
+        wy + n[1] + u[1] * su,
+        wz + n[2] + u[2] * su,
+    ));
+    let s2 = is_occluding(get_block_world(
+        chunks,
+        wx + n[0] + v[0] * sv,
+        wy + n[1] + v[1] * sv,
+        wz + n[2] + v[2] * sv,
+    ));
+    let c = is_occluding(get_block_world(
+        chunks,
+        wx + n[0] + u[0] * su + v[0] * sv,
+        wy + n[1] + u[1] * su + v[1] * sv,
+        wz + n[2] + u[2] * su + v[2] * sv,
+    ));
+
+    let level = if s1 && s2 { 0 } else { 3 - (s1 as i32 + s2 as i32 + c as i32) };
+    match level {
+        0 => 0.56,
+        1 => 0.72,
+        2 => 0.86,
+        _ => 1.0,
+    }
+}
+
+#[inline]
+fn is_occluding(block: Block) -> bool {
+    block != Block::Air && block != Block::Leaves
 }
 
 struct TerrainNoise {
@@ -571,31 +674,59 @@ fn hash3(x: i32, z: i32, seed: u32) -> u32 {
 struct Face {
     normal: [i32; 3],
     verts: [[f32; 3]; 4],
+    uvs: [[f32; 2]; 4],
+    u_axis: [i32; 3],
+    v_axis: [i32; 3],
+    ao_signs: [[i32; 2]; 4],
 }
 
 const FACES: [Face; 6] = [
     Face {
         normal: [1, 0, 0],
         verts: [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0], [1.0, 0.0, 1.0]],
+        uvs: [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+        u_axis: [0, 1, 0],
+        v_axis: [0, 0, 1],
+        ao_signs: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
     },
     Face {
         normal: [-1, 0, 0],
         verts: [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 1.0, 0.0]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        u_axis: [0, 1, 0],
+        v_axis: [0, 0, 1],
+        ao_signs: [[-1, -1], [-1, 1], [1, 1], [1, -1]],
     },
     Face {
         normal: [0, 1, 0],
         verts: [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        u_axis: [1, 0, 0],
+        v_axis: [0, 0, -1],
+        ao_signs: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
     },
     Face {
         normal: [0, -1, 0],
         verts: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        u_axis: [1, 0, 0],
+        v_axis: [0, 0, 1],
+        ao_signs: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
     },
     Face {
         normal: [0, 0, 1],
         verts: [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        u_axis: [1, 0, 0],
+        v_axis: [0, 1, 0],
+        ao_signs: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
     },
     Face {
         normal: [0, 0, -1],
         verts: [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        u_axis: [-1, 0, 0],
+        v_axis: [0, 1, 0],
+        ao_signs: [[-1, -1], [1, -1], [1, 1], [-1, 1]],
     },
 ];

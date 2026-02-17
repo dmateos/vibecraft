@@ -7,12 +7,13 @@ mod player;
 mod streaming;
 mod ui;
 mod water;
+mod weather;
 mod world;
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bevy::pbr::MaterialPlugin;
+use bevy::pbr::{CascadeShadowConfigBuilder, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::window::CursorGrabMode;
 
@@ -24,7 +25,7 @@ use world::{LoadedChunks, StreamTimer, TerrainMode, VoxelWorld};
 fn main() {
     App::new()
         .insert_resource(Msaa::Off)
-        .insert_resource(ClearColor(Color::srgb(0.55, 0.8, 0.98)))
+        .insert_resource(ClearColor(Color::srgb(0.40, 0.72, 0.96)))
         .insert_resource(AmbientLight {
             color: Color::WHITE,
             brightness: 180.0,
@@ -48,9 +49,14 @@ fn main() {
         )))
         .insert_resource(generation::GenerationConfig::default())
         .insert_resource(generation::GenerationQueue::default())
+        .insert_resource(generation::GenerationRuntimeStats::default())
         .insert_resource(generation::LiveLlmState::default())
         .insert_resource(generation::PromptInputState::default())
+        .insert_resource(weather::WeatherState::default())
+        .insert_resource(streaming::StreamingRuntimeStats::default())
         .insert_resource(interact::PlacementPalette::default())
+        .insert_resource(ui::DebugOverlayState::default())
+        .insert_resource(ui::FrameStats::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "VibeCraft".to_string(),
@@ -100,7 +106,13 @@ fn main() {
                 generation::process_generation_queue,
                 regenerate_world_on_key,
                 toggle_terrain_mode_on_key,
+                weather::cycle_weather_on_key,
+                weather::tick_weather_blend,
+                weather::apply_weather_to_materials,
+                ui::toggle_debug_overlay,
+                ui::sample_frame_stats,
                 ui::update_hud_text,
+                ui::update_debug_hud_text,
             ),
         )
         .run();
@@ -108,6 +120,7 @@ fn main() {
 
 fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
     mut windows: Query<&mut Window>,
 ) {
@@ -117,7 +130,9 @@ fn setup(
             fog_color: Vec4::new(0.55, 0.8, 0.98, 1.0),
             fog_distances: Vec4::new(300.0, 760.0, 0.0, 0.0),
             ao: Vec4::new(0.48, 0.50, 0.0, 0.0),
+            weather: Vec4::new(0.18, 0.018, 0.013, 0.0),
         },
+        atlas: asset_server.load("textures/kenney_voxel_pack/Spritesheets/spritesheet_tiles.png"),
     });
     commands.insert_resource(TerrainMaterial(material));
 
@@ -142,9 +157,15 @@ fn setup(
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
             illuminance: 10000.0,
-            shadows_enabled: false,
+            shadows_enabled: true,
             ..default()
         },
+        cascade_shadow_config: CascadeShadowConfigBuilder {
+            first_cascade_far_bound: 40.0,
+            maximum_distance: 180.0,
+            ..default()
+        }
+        .into(),
         transform: Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.8, 0.5, 0.0)),
         ..default()
     });

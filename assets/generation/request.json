@@ -1,0 +1,64 @@
+{
+  "version": "1",
+  "request_id": "example-castle-courtyard",
+  "source": "manual_file",
+  "ops": [
+    {
+      "type": "paint_region",
+      "shape": "circle",
+      "center": [0, 0],
+      "radius": 18,
+      "surface_block": "grass",
+      "seed": 42
+    },
+    {
+      "type": "hollow_box",
+      "min": [-8, 58, -8],
+      "max": [8, 70, 8],
+      "wall_block": "castle_stone",
+      "wall_thickness": 1,
+      "floor_block": "castle_floor",
+      "roof_block": "castle_trim"
+    },
+    {
+      "type": "hollow_box",
+      "min": [-18, 58, -18],
+      "max": [18, 66, 18],
+      "wall_block": "castle_stone",
+      "wall_thickness": 1,
+      "floor_block": "castle_floor"
+    },
+    {
+      "type": "cylinder",
+      "center": [-18, 58, -18],
+      "radius": 3,
+      "height": 16,
+      "block": "castle_trim",
+      "hollow": true
+    },
+    {
+      "type": "cylinder",
+      "center": [18, 58, -18],
+      "radius": 3,
+      "height": 16,
+      "block": "castle_trim",
+      "hollow": true
+    },
+    {
+      "type": "cylinder",
+      "center": [-18, 58, 18],
+      "radius": 3,
+      "height": 16,
+      "block": "castle_trim",
+      "hollow": true
+    },
+    {
+      "type": "cylinder",
+      "center": [18, 58, 18],
+      "radius": 3,
+      "height": 16,
+      "block": "castle_trim",
+      "hollow": true
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vibecraft.local/schemas/generation-request-v1.json",
+  "title": "VibeCraft Generation Request v1",
+  "type": "object",
+  "required": ["version", "request_id", "ops"],
+  "properties": {
+    "version": { "const": "1" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string" },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type", "position", "block"],
+            "properties": {
+              "type": { "const": "place_block" },
+              "position": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "block": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "prefab", "position"],
+            "properties": {
+              "type": { "const": "place_prefab" },
+              "prefab": { "type": "string" },
+              "position": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "rotation": { "type": "integer", "default": 0 },
+              "seed": { "type": "integer", "minimum": 0, "default": 0 }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "shape", "center", "radius", "surface_block"],
+            "properties": {
+              "type": { "const": "paint_region" },
+              "shape": { "const": "circle" },
+              "center": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "radius": { "type": "integer", "minimum": 1, "maximum": 96 },
+              "surface_block": { "type": "string" },
+              "seed": { "type": "integer", "minimum": 0, "default": 0 }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "min", "max", "block"],
+            "properties": {
+              "type": { "const": "fill_box" },
+              "min": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "max": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "block": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "min", "max", "wall_block"],
+            "properties": {
+              "type": { "const": "hollow_box" },
+              "min": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "max": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "wall_block": { "type": "string" },
+              "wall_thickness": { "type": "integer", "minimum": 1, "maximum": 8, "default": 1 },
+              "floor_block": { "type": "string" },
+              "roof_block": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "center", "radius", "height", "block"],
+            "properties": {
+              "type": { "const": "cylinder" },
+              "center": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "radius": { "type": "integer", "minimum": 1, "maximum": 64 },
+              "height": { "type": "integer", "minimum": 1, "maximum": 160 },
+              "block": { "type": "string" },
+              "hollow": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "center", "radius", "block"],
+            "properties": {
+              "type": { "const": "sphere" },
+              "center": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "radius": { "type": "integer", "minimum": 1, "maximum": 96 },
+              "block": { "type": "string" },
+              "hollow": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["type", "from", "to", "block"],
+            "properties": {
+              "type": { "const": "line" },
+              "from": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "to": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "block": { "type": "string" },
+              "thickness": { "type": "integer", "minimum": 1, "maximum": 8, "default": 1 }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}
