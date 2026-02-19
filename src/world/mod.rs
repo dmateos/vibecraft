@@ -29,6 +29,7 @@ pub enum Block {
 pub struct Chunk {
     pub pos: IVec2,
     voxels: Vec<Block>,
+    biomes: Vec<BiomeKind>,
 }
 
 impl Chunk {
@@ -36,6 +37,7 @@ impl Chunk {
         Self {
             pos,
             voxels: vec![Block::Air; CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE],
+            biomes: vec![BiomeKind::Plains; CHUNK_SIZE * CHUNK_SIZE],
         }
     }
 
@@ -53,6 +55,22 @@ impl Chunk {
     pub fn set_local(&mut self, x: usize, y: usize, z: usize, block: Block) {
         let idx = Self::index(x, y, z);
         self.voxels[idx] = block;
+    }
+
+    #[inline]
+    fn biome_index(x: usize, z: usize) -> usize {
+        x + z * CHUNK_SIZE
+    }
+
+    #[inline]
+    fn set_biome_local(&mut self, x: usize, z: usize, biome: BiomeKind) {
+        let idx = Self::biome_index(x, z);
+        self.biomes[idx] = biome;
+    }
+
+    #[inline]
+    fn get_biome_local(&self, x: usize, z: usize) -> BiomeKind {
+        self.biomes[Self::biome_index(x, z)]
     }
 }
 
@@ -88,6 +106,7 @@ impl TerrainMode {
 pub struct ChunkRender {
     pub entity: Entity,
     pub mesh: Handle<Mesh>,
+    pub lod: u8,
 }
 
 #[derive(Resource, Default)]
@@ -114,7 +133,9 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
             let wx = base_x + x as i32;
             let wz = base_z + z as i32;
 
-            let (h, biome, ridge) = sample_surface(&noise, wx, wz);
+            let surface = sample_surface(&noise, wx, wz);
+            chunk.set_biome_local(x, z, surface.biome);
+            let h = surface.height;
 
             for y in 0..=h {
                 let yi = y as i32;
@@ -133,28 +154,18 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
                         wz as f64 * 0.035 - warp as f64 * 0.8,
                     ]) as f32;
                     let cave_threshold =
-                        0.62 + ((yi as f32 / WORLD_HEIGHT as f32) - 0.5) * 0.06 + ridge.abs() * 0.05;
+                        0.62 + ((yi as f32 / WORLD_HEIGHT as f32) - 0.5) * 0.06 + surface.ridge.abs() * 0.05;
                     if cave > cave_threshold {
                         continue;
                     }
                 }
 
                 let block = if is_surface {
-                    if yi <= SEA_LEVEL || biome < -0.62 {
-                        Block::Sand
-                    } else if yi >= SEA_LEVEL + 46 {
-                        Block::Snow
-                    } else {
-                        Block::Grass
-                    }
+                    biome_surface_block(surface.biome, yi)
                 } else if is_subsurface {
-                    if yi <= SEA_LEVEL - 1 || biome < -0.55 {
-                        Block::Sand
-                    } else {
-                        Block::Dirt
-                    }
+                    biome_subsurface_block(surface.biome, yi)
                 } else {
-                    Block::Stone
+                    biome_core_block(surface.biome)
                 };
                 chunk.set_local(x, y, z, block);
             }
@@ -162,6 +173,7 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
     }
 
     stamp_trees(&mut chunk, &noise);
+    stamp_biome_features(&mut chunk, &noise);
     chunk
 }
 
@@ -172,6 +184,7 @@ fn generate_flat_chunk(pos: IVec2) -> Chunk {
 
     for z in 0..CHUNK_SIZE {
         for x in 0..CHUNK_SIZE {
+            chunk.set_biome_local(x, z, BiomeKind::Plains);
             for y in 0..=surface {
                 let yi = y as i32;
                 let block = if yi == surface {
@@ -189,7 +202,15 @@ fn generate_flat_chunk(pos: IVec2) -> Chunk {
     chunk
 }
 
-pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
+pub fn build_chunk_mesh_lod(pos: IVec2, chunks: &HashMap<IVec2, Chunk>, lod: u8) -> Mesh {
+    let step = 1usize << lod.min(2);
+    if step <= 1 {
+        return build_chunk_mesh_full(pos, chunks);
+    }
+    build_chunk_mesh_coarse(pos, chunks, step)
+}
+
+fn build_chunk_mesh_full(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -214,6 +235,7 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
                 let wx = base_x + x as i32;
                 let wy = y as i32;
                 let wz = base_z + z as i32;
+                let biome = chunk.get_biome_local(x, z);
 
                 for face in FACES {
                     let neighbor = get_block_world(
@@ -228,7 +250,7 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
 
                     let start = positions.len() as u32;
                     let tint = block_tint(block);
-                    let tex_id = block_face_texture_id(block, face) as f32;
+                    let tex_id = block_face_texture_id(block, face, biome, wx, wz) as f32;
 
                     for (vidx, v) in face.verts.into_iter().enumerate() {
                         positions.push([
@@ -252,6 +274,90 @@ pub fn build_chunk_mesh(pos: IVec2, chunks: &HashMap<IVec2, Chunk>) -> Mesh {
                         );
                         let ao_packed = ao.clamp(0.0, 0.999);
                         colors.push([tint[0], tint[1], tint[2], tex_id + ao_packed]);
+                    }
+
+                    indices.extend_from_slice(&[
+                        start,
+                        start + 1,
+                        start + 2,
+                        start,
+                        start + 2,
+                        start + 3,
+                    ]);
+                }
+            }
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_indices(Indices::U32(indices));
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh
+}
+
+fn build_chunk_mesh_coarse(pos: IVec2, chunks: &HashMap<IVec2, Chunk>, step: usize) -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices = Vec::new();
+
+    let Some(chunk) = chunks.get(&pos) else {
+        return empty_mesh();
+    };
+
+    let base_x = pos.x * CHUNK_SIZE as i32;
+    let base_z = pos.y * CHUNK_SIZE as i32;
+    let cube_size = step as f32;
+    let step_i = step as i32;
+
+    for y in (0..WORLD_HEIGHT).step_by(step) {
+        for z in (0..CHUNK_SIZE).step_by(step) {
+            for x in (0..CHUNK_SIZE).step_by(step) {
+                let block = chunk.get_local(x, y, z);
+                if block == Block::Air {
+                    continue;
+                }
+
+                let wx = base_x + x as i32;
+                let wy = y as i32;
+                let wz = base_z + z as i32;
+                let biome = chunk.get_biome_local(x, z);
+
+                for face in FACES {
+                    let neighbor = get_block_world(
+                        chunks,
+                        wx + face.normal[0] * step_i,
+                        wy + face.normal[1] * step_i,
+                        wz + face.normal[2] * step_i,
+                    );
+                    if neighbor != Block::Air {
+                        continue;
+                    }
+
+                    let start = positions.len() as u32;
+                    let tint = block_tint(block);
+                    let tex_id = block_face_texture_id(block, face, biome, wx, wz) as f32;
+
+                    for (vidx, v) in face.verts.into_iter().enumerate() {
+                        positions.push([
+                            x as f32 + v[0] * cube_size,
+                            y as f32 + v[1] * cube_size,
+                            z as f32 + v[2] * cube_size,
+                        ]);
+                        normals.push([
+                            face.normal[0] as f32,
+                            face.normal[1] as f32,
+                            face.normal[2] as f32,
+                        ]);
+                        uvs.push(face.uvs[vidx]);
+                        colors.push([tint[0], tint[1], tint[2], tex_id + 1.0]);
                     }
 
                     indices.extend_from_slice(&[
@@ -353,7 +459,7 @@ pub fn remesh_affected_chunks(
         if let Some(render) = loaded.entries.get(&pos)
             && let Some(mesh) = meshes.get_mut(&render.mesh)
         {
-            *mesh = build_chunk_mesh(pos, chunks);
+            *mesh = build_chunk_mesh_lod(pos, chunks, render.lod);
         }
     }
 }
@@ -392,46 +498,111 @@ fn block_tint(block: Block) -> [f32; 3] {
     }
 }
 
-fn block_face_texture_id(block: Block, face: Face) -> u32 {
+fn block_face_texture_id(block: Block, face: Face, biome: BiomeKind, wx: i32, wz: i32) -> u32 {
     // Atlas is 9x10 tiles (1152x1280) with 128x128 cells.
     // tile_id = row * 9 + col
     const COLS: u32 = 9;
     let tile = |col: u32, row: u32| row * COLS + col;
+    let pick3 = |a: u32, b: u32, c: u32| -> u32 {
+        let h = hash2(div_floor(wx, 8), div_floor(wz, 8));
+        match h % 6 {
+            0 | 1 => a,
+            2 | 3 => b,
+            _ => c,
+        }
+    };
+
+    let grass_top = tile(6, 1);
+    let sand = tile(3, 6);
+    let red_sand = tile(4, 3);
+    let grey_sand = tile(5, 8);
+    let snow = tile(3, 5);
+    let dirt = tile(7, 5);
+    let dirt_grass = tile(7, 4);
+    let dirt_sand = tile(7, 3);
+    let dirt_snow = tile(7, 2);
+    let stone = tile(3, 4);
+    let grey_stone = tile(5, 7);
+    let gravel_stone = tile(5, 9);
+    let stone_sand = tile(2, 1);
+    let stone_snow = tile(1, 8);
+    let stone_dirt = tile(5, 6);
+    let trunk_top = tile(0, 9);
+    let trunk_bottom = tile(1, 2);
+    let trunk_side = tile(1, 0);
+    let leaves = tile(5, 1);
+    let brick_red = tile(8, 3);
+    let redstone = tile(8, 4);
+    let redstone_emerald = tile(4, 1);
+    let redstone_sand = tile(3, 9);
+
     match block {
         Block::Grass => {
             if face.normal[1] > 0 {
-                tile(6, 1) // grass_top
+                match biome {
+                    BiomeKind::Desert => sand,
+                    BiomeKind::Tundra => snow,
+                    BiomeKind::Rocky => pick3(stone, grey_stone, gravel_stone),
+                    BiomeKind::Swamp | BiomeKind::Forest | BiomeKind::Plains => grass_top,
+                }
             } else if face.normal[1] < 0 {
-                tile(7, 5) // dirt
+                dirt
             } else {
-                tile(7, 4) // dirt_grass
+                match biome {
+                    BiomeKind::Desert => dirt_sand,
+                    BiomeKind::Tundra => dirt_snow,
+                    BiomeKind::Rocky => stone,
+                    BiomeKind::Swamp | BiomeKind::Forest | BiomeKind::Plains => dirt_grass,
+                }
             }
         }
-        Block::Dirt => tile(7, 5),  // dirt
-        Block::Stone => tile(3, 4), // stone
-        Block::Sand => tile(3, 6),  // sand
+        Block::Dirt => match biome {
+            BiomeKind::Desert => dirt_sand,
+            BiomeKind::Tundra => dirt_snow,
+            BiomeKind::Swamp => pick3(dirt, stone_dirt, dirt),
+            _ => dirt,
+        },
+        Block::Stone => match biome {
+            BiomeKind::Desert => stone_sand,
+            BiomeKind::Tundra => stone_snow,
+            BiomeKind::Rocky => pick3(stone, grey_stone, gravel_stone),
+            BiomeKind::Swamp => stone_dirt,
+            _ => stone,
+        },
+        Block::Sand => pick3(sand, red_sand, grey_sand),
         Block::Snow => {
             if face.normal[1] > 0 {
-                tile(3, 5) // snow
+                snow
             } else if face.normal[1] < 0 {
-                tile(7, 5) // dirt
+                dirt
             } else {
-                tile(7, 2) // dirt_snow
+                dirt_snow
             }
         }
         Block::Wood => {
             if face.normal[1] > 0 {
-                tile(0, 9) // trunk_top
+                trunk_top
             } else if face.normal[1] < 0 {
-                tile(1, 2) // trunk_bottom
+                trunk_bottom
             } else {
-                tile(1, 0) // trunk_side
+                trunk_side
             }
         }
-        Block::Leaves => tile(5, 1), // leaves
-        Block::Red | Block::Blue | Block::Yellow | Block::Purple | Block::Cyan => tile(3, 4),
-        Block::Air => tile(3, 4),
+        Block::Leaves => leaves,
+        Block::Red => brick_red,
+        Block::Blue => redstone_emerald,
+        Block::Yellow => red_sand,
+        Block::Purple => redstone,
+        Block::Cyan => redstone_sand,
+        Block::Air => stone,
     }
+}
+
+#[inline]
+fn hash2(x: i32, z: i32) -> u32 {
+    let mut h = (x as u32).wrapping_mul(374_761_393) ^ (z as u32).wrapping_mul(668_265_263);
+    h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
+    h ^ (h >> 16)
 }
 
 fn face_vertex_ao(
@@ -487,6 +658,8 @@ struct TerrainNoise {
     perlin_detail: Perlin,
     perlin_ridge: Perlin,
     perlin_biome: Perlin,
+    perlin_temp: Perlin,
+    perlin_moisture: Perlin,
     perlin_continent: Perlin,
     perlin_cave: Perlin,
     perlin_cave_warp: Perlin,
@@ -500,6 +673,8 @@ impl TerrainNoise {
             perlin_detail: Perlin::new(seed ^ 0x9E37_79B9),
             perlin_ridge: Perlin::new(seed ^ 0xA341_316C),
             perlin_biome: Perlin::new(seed ^ 0xC801_3EA4),
+            perlin_temp: Perlin::new(seed ^ 0x1E7A_9F2D),
+            perlin_moisture: Perlin::new(seed ^ 0x8B41_A2C7),
             perlin_continent: Perlin::new(seed ^ 0x6F12_BD9A),
             perlin_cave: Perlin::new(seed ^ 0x7F4A_7C15),
             perlin_cave_warp: Perlin::new(seed ^ 0xB529_7A4D),
@@ -507,13 +682,34 @@ impl TerrainNoise {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum BiomeKind {
+    Plains,
+    Forest,
+    Desert,
+    Tundra,
+    Rocky,
+    Swamp,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct SurfaceSample {
+    height: usize,
+    ridge: f32,
+    biome: BiomeKind,
+}
+
 #[inline]
-fn sample_surface(noise: &TerrainNoise, wx: i32, wz: i32) -> (usize, f32, f32) {
+fn sample_surface(noise: &TerrainNoise, wx: i32, wz: i32) -> SurfaceSample {
     let n1 = noise.perlin_macro.get([wx as f64 * 0.008, wz as f64 * 0.008]) as f32;
     let n2 = noise.perlin_detail.get([wx as f64 * 0.024, wz as f64 * 0.024]) as f32;
     let n3 = noise.perlin_macro.get([wx as f64 * 0.0035, wz as f64 * 0.0035]) as f32;
     let ridge = noise.perlin_ridge.get([wx as f64 * 0.015, wz as f64 * 0.015]) as f32;
     let biome = noise.perlin_biome.get([wx as f64 * 0.0024, wz as f64 * 0.0024]) as f32;
+    let temp = noise.perlin_temp.get([wx as f64 * 0.0019, wz as f64 * 0.0019]) as f32;
+    let moisture = noise
+        .perlin_moisture
+        .get([wx as f64 * 0.0022 + 121.3, wz as f64 * 0.0022 - 87.1]) as f32;
     let continent = noise
         .perlin_continent
         .get([wx as f64 * 0.0017, wz as f64 * 0.0017]) as f32;
@@ -521,10 +717,85 @@ fn sample_surface(noise: &TerrainNoise, wx: i32, wz: i32) -> (usize, f32, f32) {
     let cliff_mask = (ridge_abs - 0.58).max(0.0);
     let cliff = cliff_mask * cliff_mask * 62.0;
     let continental = ((continent + 1.0) * 0.5).powf(1.3);
-    let base = SEA_LEVEL as f32 - 20.0 + continental * 50.0;
+    // Slightly raise continental baseline to reduce ocean coverage.
+    let base = SEA_LEVEL as f32 - 14.0 + continental * 50.0;
     let mut height = base + n1 * 16.0 + n2 * 7.0 + n3 * 20.0 + cliff + biome * 6.0;
     height = height.clamp(6.0, (WORLD_HEIGHT - 2) as f32);
-    (height as usize, biome, ridge)
+    let biome_kind = classify_biome(temp, moisture, ridge, height as i32);
+    SurfaceSample {
+        height: height as usize,
+        ridge,
+        biome: biome_kind,
+    }
+}
+
+#[inline]
+fn classify_biome(temp: f32, moisture: f32, ridge: f32, height: i32) -> BiomeKind {
+    if height >= SEA_LEVEL + 52 || (temp < -0.45 && height >= SEA_LEVEL + 20) {
+        return BiomeKind::Tundra;
+    }
+    if moisture > 0.34 && temp > -0.10 && height <= SEA_LEVEL + 10 {
+        return BiomeKind::Swamp;
+    }
+    if temp > 0.30 && moisture < -0.20 {
+        return BiomeKind::Desert;
+    }
+    if ridge.abs() > 0.62 || height >= SEA_LEVEL + 34 {
+        return BiomeKind::Rocky;
+    }
+    if moisture > 0.12 {
+        return BiomeKind::Forest;
+    }
+    BiomeKind::Plains
+}
+
+#[inline]
+fn biome_surface_block(biome: BiomeKind, y: i32) -> Block {
+    if y <= SEA_LEVEL - 1 {
+        return Block::Sand;
+    }
+    match biome {
+        BiomeKind::Desert => Block::Sand,
+        BiomeKind::Tundra => Block::Snow,
+        BiomeKind::Rocky => Block::Stone,
+        BiomeKind::Swamp => {
+            if y <= SEA_LEVEL + 1 {
+                Block::Dirt
+            } else {
+                Block::Grass
+            }
+        }
+        BiomeKind::Forest | BiomeKind::Plains => Block::Grass,
+    }
+}
+
+#[inline]
+fn biome_subsurface_block(biome: BiomeKind, y: i32) -> Block {
+    if y <= SEA_LEVEL - 2 {
+        return Block::Sand;
+    }
+    match biome {
+        BiomeKind::Desert => Block::Sand,
+        BiomeKind::Tundra => {
+            if y >= SEA_LEVEL + 18 {
+                Block::Snow
+            } else {
+                Block::Stone
+            }
+        }
+        BiomeKind::Rocky => Block::Stone,
+        BiomeKind::Swamp => Block::Dirt,
+        BiomeKind::Forest | BiomeKind::Plains => Block::Dirt,
+    }
+}
+
+#[inline]
+fn biome_core_block(biome: BiomeKind) -> Block {
+    match biome {
+        BiomeKind::Desert => Block::Sand,
+        BiomeKind::Swamp => Block::Dirt,
+        _ => Block::Stone,
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -559,30 +830,148 @@ fn stamp_trees(chunk: &mut Chunk, noise: &TerrainNoise) {
                 continue;
             }
 
-            let (surface_y, biome, ridge) = sample_surface(noise, tx, tz);
-            let sy = surface_y as i32;
+            let sample = sample_surface(noise, tx, tz);
+            let sy = sample.height as i32;
             if sy <= SEA_LEVEL + 2 {
                 continue;
             }
-            if biome < -0.48 {
+            if sample.ridge.abs() > 0.68 {
                 continue;
             }
-            if ridge.abs() > 0.62 {
-                continue;
-            }
-            if (h >> 16) & 0xFF < 92 {
-                continue;
-            }
-
-            let kind = if biome > 0.30 || sy >= SEA_LEVEL + 42 {
-                TreeKind::Pine
-            } else {
-                TreeKind::Oak
+            let roll = ((h >> 16) & 0xFF) as i32;
+            let (threshold, kind) = match sample.biome {
+                BiomeKind::Desert => (255, TreeKind::Oak),
+                BiomeKind::Rocky => (250, TreeKind::Pine),
+                BiomeKind::Tundra => (246, TreeKind::Pine),
+                BiomeKind::Plains => (214, TreeKind::Oak),
+                BiomeKind::Swamp => (190, TreeKind::Oak),
+                BiomeKind::Forest => (
+                    158,
+                    if (h & 1) == 0 {
+                        TreeKind::Oak
+                    } else {
+                        TreeKind::Pine
+                    },
+                ),
             };
+            if roll < threshold {
+                continue;
+            }
 
             let local_seed = hash3(tx, tz, noise.seed ^ 0x91C2_8E4B);
             place_tree(chunk, tx, sy + 1, tz, kind, local_seed);
         }
+    }
+}
+
+fn stamp_biome_features(chunk: &mut Chunk, noise: &TerrainNoise) {
+    const FEATURE_CELL: i32 = 10;
+    const FEATURE_MARGIN: i32 = 7;
+
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let min_x = base_x - FEATURE_MARGIN;
+    let max_x = base_x + CHUNK_SIZE as i32 - 1 + FEATURE_MARGIN;
+    let min_z = base_z - FEATURE_MARGIN;
+    let max_z = base_z + CHUNK_SIZE as i32 - 1 + FEATURE_MARGIN;
+
+    let cell_min_x = div_floor(min_x, FEATURE_CELL);
+    let cell_max_x = div_floor(max_x, FEATURE_CELL);
+    let cell_min_z = div_floor(min_z, FEATURE_CELL);
+    let cell_max_z = div_floor(max_z, FEATURE_CELL);
+
+    for cz in cell_min_z..=cell_max_z {
+        for cx in cell_min_x..=cell_max_x {
+            let h = hash3(cx, cz, noise.seed ^ 0x4D2A_9C17);
+            let tx = cx * FEATURE_CELL + ((h as i32) & 7);
+            let tz = cz * FEATURE_CELL + (((h >> 8) as i32) & 7);
+            if tx < min_x || tx > max_x || tz < min_z || tz > max_z {
+                continue;
+            }
+
+            let sample = sample_surface(noise, tx, tz);
+            let sy = sample.height as i32;
+            if sy <= SEA_LEVEL + 1 {
+                continue;
+            }
+            if sample.ridge.abs() > 0.76 {
+                continue;
+            }
+
+            let roll = ((h >> 16) & 0xFF) as i32;
+            match sample.biome {
+                BiomeKind::Rocky => {
+                    if roll >= 216 {
+                        let radius = 1 + ((h >> 3) % 2) as i32;
+                        place_boulder(chunk, tx, sy + 1, tz, radius, Block::Stone, h);
+                    }
+                }
+                BiomeKind::Desert => {
+                    if roll >= 224 {
+                        let radius = 1 + ((h >> 5) % 2) as i32;
+                        place_boulder(chunk, tx, sy + 1, tz, radius, Block::Sand, h);
+                    }
+                }
+                BiomeKind::Swamp => {
+                    if sy <= SEA_LEVEL + 6 && roll >= 200 {
+                        place_reed_clump(chunk, tx, sy + 1, tz, h);
+                    }
+                }
+                BiomeKind::Forest | BiomeKind::Plains => {}
+                BiomeKind::Tundra => {
+                    if roll >= 242 {
+                        place_boulder(chunk, tx, sy + 1, tz, 1, Block::Stone, h);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn place_boulder(chunk: &mut Chunk, cx: i32, cy: i32, cz: i32, radius: i32, material: Block, seed: u32) {
+    for dy in -radius..=radius {
+        for dz in -radius..=radius {
+            for dx in -radius..=radius {
+                let d2 = dx * dx + dy * dy + dz * dz;
+                if d2 > radius * radius + (seed as i32 & 1) {
+                    continue;
+                }
+                set_feature_if_air(chunk, cx + dx, cy + dy, cz + dz, material);
+            }
+        }
+    }
+}
+
+fn place_reed_clump(chunk: &mut Chunk, x: i32, y: i32, z: i32, seed: u32) {
+    let stalks = 2 + ((seed >> 3) % 3) as i32;
+    for i in 0..stalks {
+        let ox = ((seed >> (i * 2)) as i32 & 1) - (((seed >> (i * 2 + 1)) as i32) & 1);
+        let oz = (((seed >> (i * 2 + 4)) as i32) & 1) - (((seed >> (i * 2 + 5)) as i32) & 1);
+        let h = 2 + (((seed >> (i * 3 + 8)) % 3) as i32);
+        for dy in 0..h {
+            set_feature_if_air(chunk, x + ox, y + dy, z + oz, Block::Wood);
+        }
+        set_feature_if_air(chunk, x + ox, y + h, z + oz, Block::Leaves);
+    }
+}
+
+#[inline]
+fn set_feature_if_air(chunk: &mut Chunk, wx: i32, wy: i32, wz: i32, block: Block) {
+    if !(0..WORLD_HEIGHT as i32).contains(&wy) {
+        return;
+    }
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let lx = wx - base_x;
+    let lz = wz - base_z;
+    if lx < 0 || lz < 0 || lx >= CHUNK_SIZE as i32 || lz >= CHUNK_SIZE as i32 {
+        return;
+    }
+    let x = lx as usize;
+    let y = wy as usize;
+    let z = lz as usize;
+    if chunk.get_local(x, y, z) == Block::Air {
+        chunk.set_local(x, y, z, block);
     }
 }
 

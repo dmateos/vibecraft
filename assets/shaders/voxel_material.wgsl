@@ -59,7 +59,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let tile_col = tex_id - floor(tex_id / cols) * cols;
     let tile_row = floor(tex_id / cols);
     let tile_size = vec2<f32>(1.0 / cols, 1.0 / rows);
-    let uv_local = fract(in.uv);
+    // Inset UVs slightly so distant sampling does not bleed into adjacent atlas tiles.
+    let inset_px = 1.0;
+    let uv_inset = vec2<f32>(inset_px / 128.0, inset_px / 128.0);
+    let uv_local = uv_inset + fract(in.uv) * (vec2<f32>(1.0, 1.0) - uv_inset * 2.0);
     let atlas_uv = vec2<f32>(
         (tile_col + uv_local.x) * tile_size.x,
         (tile_row + uv_local.y) * tile_size.y

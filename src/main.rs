@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::pbr::{CascadeShadowConfigBuilder, MaterialPlugin};
 use bevy::prelude::*;
+use bevy::render::texture::{ImageLoaderSettings, ImageSampler};
 use bevy::window::CursorGrabMode;
 
 use config::SEA_LEVEL;
@@ -34,7 +35,7 @@ fn main() {
             seed: 1337,
             chunks: HashMap::new(),
         })
-        .insert_resource(TerrainMode::Flat)
+        .insert_resource(TerrainMode::Procedural)
         .insert_resource(LoadedChunks::default())
         .insert_resource(StreamTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
         .insert_resource(clouds::LoadedClouds::default())
@@ -52,6 +53,7 @@ fn main() {
         .insert_resource(generation::GenerationRuntimeStats::default())
         .insert_resource(generation::LiveLlmState::default())
         .insert_resource(generation::PromptInputState::default())
+        .insert_resource(weather::DayNightState::default())
         .insert_resource(weather::WeatherState::default())
         .insert_resource(streaming::StreamingRuntimeStats::default())
         .insert_resource(interact::PlacementPalette::default())
@@ -106,6 +108,7 @@ fn main() {
                 generation::process_generation_queue,
                 regenerate_world_on_key,
                 toggle_terrain_mode_on_key,
+                weather::tick_day_night,
                 weather::cycle_weather_on_key,
                 weather::tick_weather_blend,
                 weather::apply_weather_to_materials,
@@ -132,7 +135,13 @@ fn setup(
             ao: Vec4::new(0.48, 0.50, 0.0, 0.0),
             weather: Vec4::new(0.18, 0.018, 0.013, 0.0),
         },
-        atlas: asset_server.load("textures/kenney_voxel_pack/Spritesheets/spritesheet_tiles.png"),
+        atlas: asset_server.load_with_settings(
+            "textures/vibecraft/terrain/atlas.png",
+            |settings: &mut ImageLoaderSettings| {
+                // Atlas tiles should use nearest filtering to avoid sampling neighboring tiles.
+                settings.sampler = ImageSampler::nearest();
+            },
+        ),
     });
     commands.insert_resource(TerrainMaterial(material));
 

@@ -165,39 +165,44 @@ fn build_water_mesh_for_chunk(
     pos: IVec2,
     chunks: &std::collections::HashMap<IVec2, Chunk>,
 ) -> Mesh {
-    const DIVS: usize = 12;
-    let size = CHUNK_SIZE as f32;
-    let step = size / DIVS as f32;
     let base_x = pos.x * CHUNK_SIZE as i32;
     let base_z = pos.y * CHUNK_SIZE as i32;
 
-    let mut positions = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
-    let mut normals = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
-    let mut colors = Vec::with_capacity((DIVS + 1) * (DIVS + 1));
-    let mut indices = Vec::with_capacity(DIVS * DIVS * 6);
+    let mut positions = Vec::with_capacity(CHUNK_SIZE * CHUNK_SIZE * 4);
+    let mut normals = Vec::with_capacity(CHUNK_SIZE * CHUNK_SIZE * 4);
+    let mut colors = Vec::with_capacity(CHUNK_SIZE * CHUNK_SIZE * 4);
+    let mut indices = Vec::with_capacity(CHUNK_SIZE * CHUNK_SIZE * 6);
 
-    for gz in 0..=DIVS {
-        for gx in 0..=DIVS {
-            let lx = gx as f32 * step;
-            let lz = gz as f32 * step;
-            positions.push([lx, 0.0, lz]);
-            normals.push([0.0, 1.0, 0.0]);
-
-            let wx = base_x + lx.round() as i32;
-            let wz = base_z + lz.round() as i32;
+    for z in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            let wx = base_x + x as i32;
+            let wz = base_z + z as i32;
             let surface = find_surface_y(chunks, wx, wz);
-            let depth = ((SEA_LEVEL - surface) as f32 / 24.0).clamp(0.0, 1.0);
-            colors.push([depth, 0.0, 0.0, 1.0]);
-        }
-    }
+            // Draw water only where terrain is meaningfully below sea level.
+            if surface >= SEA_LEVEL - 1 {
+                continue;
+            }
 
-    for z in 0..DIVS {
-        for x in 0..DIVS {
-            let i0 = (z * (DIVS + 1) + x) as u32;
-            let i1 = i0 + 1;
-            let i2 = i0 + (DIVS + 1) as u32;
-            let i3 = i2 + 1;
-            indices.extend_from_slice(&[i0, i3, i1, i0, i2, i3]);
+            let depth = ((SEA_LEVEL - surface) as f32 / 24.0).clamp(0.0, 1.0);
+            let start = positions.len() as u32;
+
+            positions.extend_from_slice(&[
+                [x as f32, 0.0, z as f32],
+                [x as f32 + 1.0, 0.0, z as f32],
+                [x as f32 + 1.0, 0.0, z as f32 + 1.0],
+                [x as f32, 0.0, z as f32 + 1.0],
+            ]);
+            normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+            colors.extend_from_slice(&[[depth, 0.0, 0.0, 1.0]; 4]);
+
+            indices.extend_from_slice(&[
+                start,
+                start + 2,
+                start + 1,
+                start,
+                start + 3,
+                start + 2,
+            ]);
         }
     }
 

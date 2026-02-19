@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
-use bevy::render::view::NoFrustumCulling;
 use rayon::prelude::*;
 
 use crate::config::{
@@ -10,8 +9,8 @@ use crate::config::{
 use crate::materials::{TerrainMaterial, VoxelMaterial};
 use crate::player::FlyCam;
 use crate::world::{
-    build_chunk_mesh, chunk_distance_sq, div_floor, generate_chunk, ChunkRender, LoadedChunks, StreamTimer,
-    TerrainMode, VoxelWorld,
+    build_chunk_mesh_lod, chunk_distance_sq, div_floor, generate_chunk, ChunkRender, LoadedChunks,
+    StreamTimer, TerrainMode, VoxelWorld,
 };
 
 #[derive(Resource, Default)]
@@ -106,7 +105,7 @@ pub fn stream_chunks_around_camera(
     let chunk_map = &world.chunks;
     let built = to_spawn
         .par_iter()
-        .map(|pos| (*pos, build_chunk_mesh(*pos, chunk_map)))
+        .map(|pos| (*pos, build_chunk_mesh_lod(*pos, chunk_map, 0)))
         .collect::<Vec<_>>();
 
     for (pos, mesh) in built {
@@ -125,12 +124,11 @@ pub fn stream_chunks_around_camera(
                     transform: Transform::from_translation(translation),
                     ..default()
                 },
-                NoFrustumCulling,
             ))
             .id();
 
         loaded
             .entries
-            .insert(pos, ChunkRender { entity, mesh: mesh_handle });
+            .insert(pos, ChunkRender { entity, mesh: mesh_handle, lod: 0 });
     }
 }
