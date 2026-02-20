@@ -1,0 +1,529 @@
+use std::collections::HashSet;
+
+use bevy::math::primitives::Cuboid;
+use bevy::pbr::NotShadowCaster;
+use bevy::prelude::*;
+
+use crate::config::{BREAK_REACH, CHUNK_SIZE};
+use crate::generation::PromptInputState;
+use crate::player::FlyCam;
+use crate::world::{
+    div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
+};
+
+const GUN_RANGE: f32 = BREAK_REACH * 2.3;
+const BULLET_SPEED: f32 = 74.0;
+const BULLET_LIFE: f32 = 1.6;
+const GRENADE_SPEED: f32 = 18.5;
+const GRENADE_GRAVITY: f32 = -24.0;
+const GRENADE_FUSE: f32 = 1.55;
+const GRENADE_RADIUS: i32 = 4;
+const MUZZLE_FLASH_TIME: f32 = 0.045;
+const EXPLOSION_FX_TIME: f32 = 0.34;
+
+#[derive(Component)]
+pub struct Grenade {
+    velocity: Vec3,
+    fuse: f32,
+}
+
+#[derive(Component)]
+pub struct Bullet {
+    velocity: Vec3,
+    life: f32,
+}
+
+#[derive(Component)]
+pub struct ViewGun;
+
+#[derive(Component)]
+pub struct WeaponVfx;
+
+#[derive(Component)]
+pub struct MuzzleFlashFx {
+    age: f32,
+}
+
+#[derive(Component)]
+pub struct ExplosionFx {
+    age: f32,
+    max_scale: f32,
+}
+
+#[derive(Resource)]
+pub struct WeaponAssets {
+    grenade_mesh: Handle<Mesh>,
+    grenade_material: Handle<StandardMaterial>,
+    bullet_mesh: Handle<Mesh>,
+    bullet_material: Handle<StandardMaterial>,
+    gun_mesh: Handle<Mesh>,
+    gun_body_material: Handle<StandardMaterial>,
+    gun_accent_material: Handle<StandardMaterial>,
+    flash_mesh: Handle<Mesh>,
+    flash_material: Handle<StandardMaterial>,
+    explosion_mesh: Handle<Mesh>,
+    explosion_material: Handle<StandardMaterial>,
+}
+
+pub fn setup_weapons(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let grenade_mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::splat(0.22))));
+    let grenade_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.20, 0.16),
+        perceptual_roughness: 0.92,
+        metallic: 0.0,
+        ..default()
+    });
+
+    let bullet_mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::splat(0.09))));
+    let bullet_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.92, 0.58),
+        emissive: Color::srgb(0.95, 0.80, 0.36).into(),
+        perceptual_roughness: 0.35,
+        metallic: 0.0,
+        ..default()
+    });
+
+    let gun_mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::ONE)));
+    let gun_body_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.14, 0.14, 0.16),
+        perceptual_roughness: 0.7,
+        metallic: 0.25,
+        ..default()
+    });
+    let gun_accent_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.58, 0.14, 0.12),
+        emissive: Color::srgb(0.18, 0.05, 0.04).into(),
+        perceptual_roughness: 0.65,
+        metallic: 0.15,
+        ..default()
+    });
+    let flash_mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::ONE)));
+    let flash_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.88, 0.52, 0.90),
+        emissive: Color::srgb(1.0, 0.72, 0.34).into(),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let explosion_mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::ONE)));
+    let explosion_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.50, 0.18, 0.34),
+        emissive: Color::srgb(0.92, 0.44, 0.15).into(),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+
+    commands.insert_resource(WeaponAssets {
+        grenade_mesh,
+        grenade_material,
+        bullet_mesh,
+        bullet_material,
+        gun_mesh,
+        gun_body_material,
+        gun_accent_material,
+        flash_mesh,
+        flash_material,
+        explosion_mesh,
+        explosion_material,
+    });
+}
+
+pub fn ensure_view_gun(
+    mut commands: Commands,
+    assets: Res<WeaponAssets>,
+    cam_q: Query<Entity, With<FlyCam>>,
+    gun_q: Query<Entity, With<ViewGun>>,
+) {
+    if !gun_q.is_empty() {
+        return;
+    }
+
+    let Ok(cam_entity) = cam_q.get_single() else {
+        return;
+    };
+
+    let gun_root = commands
+        .spawn((
+            SpatialBundle {
+                transform: Transform {
+                    translation: Vec3::new(0.34, -0.28, -0.55),
+                    rotation: Quat::from_euler(EulerRot::XYZ, -0.18, -0.24, -0.03),
+                    ..default()
+                },
+                ..default()
+            },
+            ViewGun,
+            NotShadowCaster,
+        ))
+        .id();
+
+    let body = commands
+        .spawn((
+            PbrBundle {
+                mesh: assets.gun_mesh.clone(),
+                material: assets.gun_body_material.clone(),
+                transform: Transform {
+                    translation: Vec3::new(0.0, 0.0, 0.0),
+                    scale: Vec3::new(0.22, 0.14, 0.74),
+                    ..default()
+                },
+                ..default()
+            },
+            NotShadowCaster,
+        ))
+        .id();
+
+    let barrel = commands
+        .spawn((
+            PbrBundle {
+                mesh: assets.gun_mesh.clone(),
+                material: assets.gun_accent_material.clone(),
+                transform: Transform {
+                    translation: Vec3::new(0.0, 0.01, -0.44),
+                    scale: Vec3::new(0.09, 0.09, 0.30),
+                    ..default()
+                },
+                ..default()
+            },
+            NotShadowCaster,
+        ))
+        .id();
+
+    let grip = commands
+        .spawn((
+            PbrBundle {
+                mesh: assets.gun_mesh.clone(),
+                material: assets.gun_body_material.clone(),
+                transform: Transform {
+                    translation: Vec3::new(0.0, -0.11, 0.10),
+                    rotation: Quat::from_euler(EulerRot::XYZ, -0.22, 0.0, 0.0),
+                    scale: Vec3::new(0.11, 0.20, 0.18),
+                    ..default()
+                },
+                ..default()
+            },
+            NotShadowCaster,
+        ))
+        .id();
+
+    commands
+        .entity(gun_root)
+        .add_child(body)
+        .add_child(barrel)
+        .add_child(grip);
+    commands.entity(cam_entity).add_child(gun_root);
+}
+
+pub fn fire_gun_on_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut cam_q: Query<(&mut Transform, &mut FlyCam)>,
+    view_gun_q: Query<Entity, With<ViewGun>>,
+    mut commands: Commands,
+    assets: Res<WeaponAssets>,
+    prompt: Res<PromptInputState>,
+) {
+    if prompt.active || !keys.just_pressed(KeyCode::KeyZ) {
+        return;
+    }
+
+    let Ok((mut cam_transform, mut cam_ctrl)) = cam_q.get_single_mut() else {
+        return;
+    };
+
+    let forward = *cam_transform.forward();
+    let spawn = cam_transform.translation + forward * 0.85 + Vec3::new(0.0, -0.10, 0.0);
+    let velocity = forward * BULLET_SPEED;
+
+    commands.spawn((
+        PbrBundle {
+            mesh: assets.bullet_mesh.clone(),
+            material: assets.bullet_material.clone(),
+            transform: Transform::from_translation(spawn),
+            ..default()
+        },
+        Bullet {
+            velocity,
+            life: BULLET_LIFE,
+        },
+        NotShadowCaster,
+    ));
+
+    // Recoil kick.
+    cam_ctrl.pitch = (cam_ctrl.pitch + 0.030).clamp(-1.54, 1.54);
+    cam_ctrl.yaw += 0.0045;
+    let yaw_rot = Quat::from_axis_angle(Vec3::Y, cam_ctrl.yaw);
+    let pitch_rot = Quat::from_axis_angle(Vec3::X, cam_ctrl.pitch);
+    cam_transform.rotation = yaw_rot * pitch_rot;
+
+    // Short muzzle flash attached to the view-gun.
+    if let Ok(gun_entity) = view_gun_q.get_single() {
+        let flash = commands
+            .spawn((
+                PbrBundle {
+                    mesh: assets.flash_mesh.clone(),
+                    material: assets.flash_material.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 0.01, -0.62),
+                        scale: Vec3::new(0.10, 0.10, 0.18),
+                        ..default()
+                    },
+                    ..default()
+                },
+                MuzzleFlashFx { age: 0.0 },
+                WeaponVfx,
+                NotShadowCaster,
+            ))
+            .id();
+        commands.entity(gun_entity).add_child(flash);
+    }
+}
+
+pub fn tick_bullets(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Transform, &mut Bullet)>,
+    mut world: ResMut<VoxelWorld>,
+    loaded: Res<LoadedChunks>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let dt = time.delta_seconds();
+
+    for (entity, mut transform, mut bullet) in &mut q {
+        bullet.life -= dt;
+        if bullet.life <= 0.0 {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+
+        let start = transform.translation;
+        let end = start + bullet.velocity * dt;
+
+        if let Some(hit) = raycast_block(start, end, &world.chunks) {
+            if set_block_world(&mut world.chunks, hit.x, hit.y, hit.z, Block::Air) {
+                remesh_for_cells(
+                    [IVec3::new(hit.x, hit.y, hit.z)].into_iter(),
+                    &world.chunks,
+                    &loaded,
+                    &mut meshes,
+                );
+            }
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+
+        transform.translation = end;
+    }
+}
+
+pub fn throw_grenade_on_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    cam_q: Query<&Transform, With<FlyCam>>,
+    mut commands: Commands,
+    assets: Res<WeaponAssets>,
+    prompt: Res<PromptInputState>,
+) {
+    if prompt.active || !keys.just_pressed(KeyCode::KeyQ) {
+        return;
+    }
+
+    let Ok(cam) = cam_q.get_single() else {
+        return;
+    };
+
+    let forward = *cam.forward();
+    let spawn = cam.translation + forward * 0.8 + Vec3::Y * -0.10;
+    let velocity = forward * GRENADE_SPEED + Vec3::Y * 3.4;
+
+    commands.spawn((
+        PbrBundle {
+            mesh: assets.grenade_mesh.clone(),
+            material: assets.grenade_material.clone(),
+            transform: Transform::from_translation(spawn),
+            ..default()
+        },
+        Grenade {
+            velocity,
+            fuse: GRENADE_FUSE,
+        },
+    ));
+}
+
+pub fn tick_grenades(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Transform, &mut Grenade)>,
+    mut world: ResMut<VoxelWorld>,
+    assets: Res<WeaponAssets>,
+    loaded: Res<LoadedChunks>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let dt = time.delta_seconds();
+
+    for (entity, mut transform, mut grenade) in &mut q {
+        grenade.fuse -= dt;
+
+        grenade.velocity.y += GRENADE_GRAVITY * dt;
+        let next = transform.translation + grenade.velocity * dt;
+
+        let cell = IVec3::new(next.x.floor() as i32, next.y.floor() as i32, next.z.floor() as i32);
+        let hit_solid = get_block_world(&world.chunks, cell.x, cell.y, cell.z) != Block::Air;
+
+        if hit_solid {
+            grenade.fuse = grenade.fuse.min(0.06);
+            grenade.velocity *= 0.25;
+        } else {
+            transform.translation = next;
+        }
+
+        if grenade.fuse > 0.0 {
+            continue;
+        }
+
+        let center = IVec3::new(
+            transform.translation.x.floor() as i32,
+            transform.translation.y.floor() as i32,
+            transform.translation.z.floor() as i32,
+        );
+        explode_blocks(center, GRENADE_RADIUS, &mut world.chunks, &loaded, &mut meshes);
+        spawn_explosion_fx(
+            &mut commands,
+            &assets,
+            transform.translation,
+            GRENADE_RADIUS as f32,
+        );
+
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+pub fn tick_weapon_vfx(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut flash_q: Query<(Entity, &mut MuzzleFlashFx)>,
+    mut boom_q: Query<(Entity, &mut ExplosionFx, &mut Transform)>,
+) {
+    let dt = time.delta_seconds();
+
+    for (entity, mut fx) in &mut flash_q {
+        fx.age += dt;
+        if fx.age >= MUZZLE_FLASH_TIME {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+
+    for (entity, mut fx, mut transform) in &mut boom_q {
+        fx.age += dt;
+        let t = (fx.age / EXPLOSION_FX_TIME).clamp(0.0, 1.0);
+        let s = 0.4 + fx.max_scale * (t * (2.0 - t));
+        transform.scale = Vec3::splat(s);
+        if fx.age >= EXPLOSION_FX_TIME {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+}
+
+fn explode_blocks(
+    center: IVec3,
+    radius: i32,
+    chunks: &mut std::collections::HashMap<IVec2, crate::world::Chunk>,
+    loaded: &LoadedChunks,
+    meshes: &mut Assets<Mesh>,
+) {
+    let r2 = radius * radius;
+    let mut changed = Vec::new();
+
+    for z in center.z - radius..=center.z + radius {
+        for y in center.y - radius..=center.y + radius {
+            for x in center.x - radius..=center.x + radius {
+                let dx = x - center.x;
+                let dy = y - center.y;
+                let dz = z - center.z;
+                if dx * dx + dy * dy + dz * dz > r2 {
+                    continue;
+                }
+                if set_block_world(chunks, x, y, z, Block::Air) {
+                    changed.push(IVec3::new(x, y, z));
+                }
+            }
+        }
+    }
+
+    remesh_for_cells(changed.into_iter(), chunks, loaded, meshes);
+}
+
+fn spawn_explosion_fx(commands: &mut Commands, assets: &WeaponAssets, at: Vec3, radius: f32) {
+    commands.spawn((
+        PbrBundle {
+            mesh: assets.explosion_mesh.clone(),
+            material: assets.explosion_material.clone(),
+            transform: Transform {
+                translation: at + Vec3::Y * 0.2,
+                scale: Vec3::splat(0.5),
+                ..default()
+            },
+            ..default()
+        },
+        ExplosionFx {
+            age: 0.0,
+            max_scale: radius * 1.7,
+        },
+        WeaponVfx,
+        NotShadowCaster,
+    ));
+}
+
+fn remesh_for_cells(
+    cells: impl Iterator<Item = IVec3>,
+    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
+    loaded: &LoadedChunks,
+    meshes: &mut Assets<Mesh>,
+) {
+    let mut touched = HashSet::new();
+    for cell in cells {
+        let chunk = IVec2::new(
+            div_floor(cell.x, CHUNK_SIZE as i32),
+            div_floor(cell.z, CHUNK_SIZE as i32),
+        );
+        touched.insert(chunk);
+    }
+
+    for chunk in touched {
+        remesh_affected_chunks(chunk, chunks, loaded, meshes);
+    }
+}
+
+fn raycast_block(
+    start: Vec3,
+    end: Vec3,
+    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
+) -> Option<IVec3> {
+    let delta = end - start;
+    let dist = delta.length().max(0.0001);
+    let dir = delta / dist;
+    let step = 0.05;
+    let mut t = 0.0;
+    let max_dist = dist.min(GUN_RANGE);
+    let mut last = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
+
+    while t <= max_dist {
+        let p = start + dir * t;
+        let cell = IVec3::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        if cell == last {
+            t += step;
+            continue;
+        }
+        last = cell;
+
+        if get_block_world(chunks, cell.x, cell.y, cell.z) != Block::Air {
+            return Some(cell);
+        }
+        t += step;
+    }
+
+    None
+}

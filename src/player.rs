@@ -178,18 +178,42 @@ pub fn player_move_and_collision(
         cam.velocity.z = 0.0;
     }
 
-    let y_step = Vec3::new(0.0, cam.velocity.y * dt, 0.0);
-    if !collides_player(new_pos + y_step, &world.chunks) {
-        new_pos += y_step;
-    } else {
-        if cam.velocity.y < 0.0 {
-            grounded = true;
+    if chunks_loaded_for_player(new_pos, &world.chunks) {
+        let y_step = Vec3::new(0.0, cam.velocity.y * dt, 0.0);
+        if !collides_player(new_pos + y_step, &world.chunks) {
+            new_pos += y_step;
+        } else {
+            if cam.velocity.y < 0.0 {
+                grounded = true;
+            }
+            cam.velocity.y = 0.0;
         }
+    } else {
+        // Prevent falling through temporarily-unloaded terrain while streaming catches up.
         cam.velocity.y = 0.0;
+        grounded = true;
     }
 
     cam.grounded = grounded;
     transform.translation = new_pos;
+}
+
+fn chunks_loaded_for_player(eye_pos: Vec3, chunks: &HashMap<IVec2, Chunk>) -> bool {
+    let min_x = (eye_pos.x - PLAYER_RADIUS).floor() as i32;
+    let max_x = (eye_pos.x + PLAYER_RADIUS).floor() as i32;
+    let min_z = (eye_pos.z - PLAYER_RADIUS).floor() as i32;
+    let max_z = (eye_pos.z + PLAYER_RADIUS).floor() as i32;
+
+    for z in min_z..=max_z {
+        for x in min_x..=max_x {
+            let cx = crate::world::div_floor(x, crate::config::CHUNK_SIZE as i32);
+            let cz = crate::world::div_floor(z, crate::config::CHUNK_SIZE as i32);
+            if !chunks.contains_key(&IVec2::new(cx, cz)) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn try_step_up(current: Vec3, horizontal_delta: Vec3, chunks: &HashMap<IVec2, Chunk>) -> Option<Vec3> {

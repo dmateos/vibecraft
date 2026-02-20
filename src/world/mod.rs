@@ -174,6 +174,7 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
 
     stamp_trees(&mut chunk, &noise);
     stamp_biome_features(&mut chunk, &noise);
+    stamp_villages(&mut chunk, &noise);
     chunk
 }
 
@@ -928,6 +929,177 @@ fn stamp_biome_features(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 }
 
+fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
+    const VILLAGE_CELL: i32 = 64;
+    const VILLAGE_MARGIN: i32 = 56;
+
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let min_x = base_x - VILLAGE_MARGIN;
+    let max_x = base_x + CHUNK_SIZE as i32 - 1 + VILLAGE_MARGIN;
+    let min_z = base_z - VILLAGE_MARGIN;
+    let max_z = base_z + CHUNK_SIZE as i32 - 1 + VILLAGE_MARGIN;
+
+    let cell_min_x = div_floor(min_x, VILLAGE_CELL);
+    let cell_max_x = div_floor(max_x, VILLAGE_CELL);
+    let cell_min_z = div_floor(min_z, VILLAGE_CELL);
+    let cell_max_z = div_floor(max_z, VILLAGE_CELL);
+
+    for cz in cell_min_z..=cell_max_z {
+        for cx in cell_min_x..=cell_max_x {
+            let h = hash3(cx, cz, noise.seed ^ 0x51AA_92F1);
+            let guaranteed_origin = cx == 0 && cz == 0;
+            if !guaranteed_origin && (h & 0xFF) < 196 {
+                continue;
+            }
+
+            let vx = cx * VILLAGE_CELL + (((h >> 8) as i32 & 63) - 32);
+            let vz = cz * VILLAGE_CELL + (((h >> 16) as i32 & 63) - 32);
+            if vx < min_x || vx > max_x || vz < min_z || vz > max_z {
+                continue;
+            }
+
+            let center = sample_surface(noise, vx, vz);
+            if !guaranteed_origin
+                && !matches!(center.biome, BiomeKind::Plains | BiomeKind::Forest | BiomeKind::Swamp)
+            {
+                continue;
+            }
+            if !guaranteed_origin
+                && (center.height as i32 <= SEA_LEVEL + 3 || center.height as i32 >= SEA_LEVEL + 34)
+            {
+                continue;
+            }
+
+            let r = 18;
+            let s1 = sample_surface(noise, vx - r, vz).height as i32;
+            let s2 = sample_surface(noise, vx + r, vz).height as i32;
+            let s3 = sample_surface(noise, vx, vz - r).height as i32;
+            let s4 = sample_surface(noise, vx, vz + r).height as i32;
+            let max_h = s1.max(s2).max(s3).max(s4).max(center.height as i32);
+            let min_h = s1.min(s2).min(s3).min(s4).min(center.height as i32);
+            if !guaranteed_origin && max_h - min_h > 10 {
+                continue;
+            }
+
+            place_village(chunk, vx, center.height as i32 + 1, vz, h);
+        }
+    }
+}
+
+fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) {
+    let radius = 16 + ((seed >> 28) & 3) as i32;
+    flatten_village_ground(chunk, cx, ground_y, cz, radius + 4);
+
+    // Main cross roads.
+    for dz in -1..=1 {
+        for dx in -radius..=radius {
+            set_if_inside(chunk, cx + dx, ground_y, cz + dz, Block::Dirt);
+        }
+    }
+    for dx in -1..=1 {
+        for dz in -radius..=radius {
+            set_if_inside(chunk, cx + dx, ground_y, cz + dz, Block::Dirt);
+        }
+    }
+
+    // Central marker.
+    set_if_inside(chunk, cx, ground_y + 1, cz, Block::Yellow);
+
+    let house_spots = [
+        IVec2::new(-11, -8),
+        IVec2::new(9, -9),
+        IVec2::new(-10, 8),
+        IVec2::new(10, 9),
+        IVec2::new(0, -15),
+        IVec2::new(14, 0),
+    ];
+    let count = 3 + ((seed >> 20) & 0x3) as usize;
+    for i in 0..count.min(house_spots.len()) {
+        let idx = ((i as u32 * 3 + (seed >> 5)) as usize) % house_spots.len();
+        let spot = house_spots[idx];
+        let hw = 4 + ((seed >> (i + 2)) & 1) as i32;
+        let hd = 4 + ((seed >> (i + 7)) & 1) as i32;
+        let hh = 4 + ((seed >> (i + 11)) & 1) as i32;
+        place_house(chunk, cx + spot.x, ground_y + 1, cz + spot.y, hw, hd, hh, seed ^ i as u32);
+    }
+}
+
+fn flatten_village_ground(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, radius: i32) {
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx * dx + dz * dz > radius * radius + 6 {
+                continue;
+            }
+            let wx = cx + dx;
+            let wz = cz + dz;
+            if !is_inside_chunk(chunk, wx, wz) {
+                continue;
+            }
+            if let Some(top) = top_solid_y(chunk, wx, wz) {
+                if top > ground_y {
+                    for y in ground_y + 1..=top {
+                        set_if_inside(chunk, wx, y, wz, Block::Air);
+                    }
+                } else if top < ground_y {
+                    for y in top + 1..=ground_y {
+                        let fill = if y < ground_y - 1 { Block::Stone } else { Block::Dirt };
+                        set_if_inside(chunk, wx, y, wz, fill);
+                    }
+                }
+                if top >= ground_y - 2 {
+                    set_if_inside(chunk, wx, ground_y, wz, Block::Grass);
+                }
+            }
+        }
+    }
+}
+
+fn place_house(chunk: &mut Chunk, cx: i32, base_y: i32, cz: i32, hw: i32, hd: i32, hh: i32, seed: u32) {
+    let wall = if (seed & 1) == 0 { Block::Wood } else { Block::Stone };
+    let roof = if (seed & 2) == 0 { Block::Wood } else { Block::Stone };
+    let accent = if (seed & 4) == 0 { Block::Red } else { Block::Blue };
+
+    for z in -hd..=hd {
+        for x in -hw..=hw {
+            set_if_inside(chunk, cx + x, base_y - 1, cz + z, Block::Stone);
+            set_if_inside(chunk, cx + x, base_y, cz + z, Block::Dirt);
+        }
+    }
+
+    for y in 1..=hh {
+        for z in -hd..=hd {
+            for x in -hw..=hw {
+                let wx = cx + x;
+                let wz = cz + z;
+                let on_wall = x.abs() == hw || z.abs() == hd;
+                if on_wall {
+                    // Door on front wall.
+                    if z == -hd && x == 0 && y <= 2 {
+                        set_if_inside(chunk, wx, base_y + y, wz, Block::Air);
+                    } else if y == 2 && z == -hd && x.abs() == 1 {
+                        set_if_inside(chunk, wx, base_y + y, wz, accent);
+                    } else {
+                        set_if_inside(chunk, wx, base_y + y, wz, wall);
+                    }
+                } else {
+                    set_if_inside(chunk, wx, base_y + y, wz, Block::Air);
+                }
+            }
+        }
+    }
+
+    // Simple pitched-ish roof.
+    for ry in 0..=2 {
+        let shrink = ry;
+        for z in -(hd + 1 - shrink)..=(hd + 1 - shrink) {
+            for x in -(hw + 1 - shrink)..=(hw + 1 - shrink) {
+                set_if_inside(chunk, cx + x, base_y + hh + 1 + ry, cz + z, roof);
+            }
+        }
+    }
+}
+
 fn place_boulder(chunk: &mut Chunk, cx: i32, cy: i32, cz: i32, radius: i32, material: Block, seed: u32) {
     for dy in -radius..=radius {
         for dz in -radius..=radius {
@@ -973,6 +1145,48 @@ fn set_feature_if_air(chunk: &mut Chunk, wx: i32, wy: i32, wz: i32, block: Block
     if chunk.get_local(x, y, z) == Block::Air {
         chunk.set_local(x, y, z, block);
     }
+}
+
+#[inline]
+fn is_inside_chunk(chunk: &Chunk, wx: i32, wz: i32) -> bool {
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let lx = wx - base_x;
+    let lz = wz - base_z;
+    lx >= 0 && lz >= 0 && lx < CHUNK_SIZE as i32 && lz < CHUNK_SIZE as i32
+}
+
+fn top_solid_y(chunk: &Chunk, wx: i32, wz: i32) -> Option<i32> {
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let lx = wx - base_x;
+    let lz = wz - base_z;
+    if lx < 0 || lz < 0 || lx >= CHUNK_SIZE as i32 || lz >= CHUNK_SIZE as i32 {
+        return None;
+    }
+    let x = lx as usize;
+    let z = lz as usize;
+    for y in (0..WORLD_HEIGHT).rev() {
+        let b = chunk.get_local(x, y, z);
+        if b != Block::Air {
+            return Some(y as i32);
+        }
+    }
+    None
+}
+
+fn set_if_inside(chunk: &mut Chunk, wx: i32, wy: i32, wz: i32, block: Block) {
+    if !(0..WORLD_HEIGHT as i32).contains(&wy) {
+        return;
+    }
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let lx = wx - base_x;
+    let lz = wz - base_z;
+    if lx < 0 || lz < 0 || lx >= CHUNK_SIZE as i32 || lz >= CHUNK_SIZE as i32 {
+        return;
+    }
+    chunk.set_local(lx as usize, wy as usize, lz as usize, block);
 }
 
 fn place_tree(chunk: &mut Chunk, tx: i32, base_y: i32, tz: i32, kind: TreeKind, local_seed: u32) {

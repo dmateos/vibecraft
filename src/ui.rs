@@ -151,7 +151,7 @@ pub fn update_hud_text(
     };
 
     text.sections[0].value = format!(
-        "Terrain: {} (F6) | Weather: {} (F7) | HP: {:.0}/{:.0}\nBlock [{} / {}]: {}  |  Wheel=Cycle\nNPC: {}\nPrompt ({status}): {prompt_preview}\nP=Open Prompt, Enter=Submit, Esc=Close, L/T=Send LLM, J=Load JSON, G=Demo, E=NPC Interact, F8=Day/Night, R/F5=Reseed, F3=Debug",
+        "Terrain: {} (F6) | Weather: {} (F7) | HP: {:.0}/{:.0}\nBlock [{} / {}]: {}  |  Wheel=Cycle\nNPC: {}\nPrompt ({status}): {prompt_preview}\nP=Open Prompt, Enter=Submit, Esc=Close, L/T=Send LLM, J=Load JSON, G=Demo, E=NPC Interact, Z=Gun, Q=Grenade, F8=Day/Night, R/F5=Reseed, F3=Debug",
         terrain_mode.label(),
         weather.target.label(),
         vitals.health,

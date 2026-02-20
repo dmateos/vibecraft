@@ -8,6 +8,7 @@ mod player;
 mod streaming;
 mod ui;
 mod water;
+mod weapons;
 mod weather;
 mod world;
 
@@ -84,6 +85,7 @@ fn main() {
                 clouds::setup_clouds,
                 npc::setup_npcs,
                 water::setup_water,
+                weapons::setup_weapons,
                 generation::initialize_prompt_input,
                 ui::spawn_crosshair,
                 ui::spawn_hud,
@@ -101,6 +103,12 @@ fn main() {
                 npc::stream_npcs_around_camera,
                 npc::npc_interactions,
                 npc::tick_npcs,
+                weapons::ensure_view_gun,
+                weapons::fire_gun_on_key,
+                weapons::tick_bullets,
+                weapons::throw_grenade_on_key,
+                weapons::tick_grenades,
+                weapons::tick_weapon_vfx,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
                 clouds::animate_clouds,
@@ -206,6 +214,9 @@ fn regenerate_world_on_key(
     mut loaded_npcs: ResMut<npc::LoadedNpcs>,
     mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
+    grenade_q: Query<Entity, With<weapons::Grenade>>,
+    bullet_q: Query<Entity, With<weapons::Bullet>>,
+    weapon_vfx_q: Query<Entity, With<weapons::WeaponVfx>>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
@@ -236,6 +247,15 @@ fn regenerate_world_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_npcs.clear_and_despawn(&mut commands);
+    for entity in &grenade_q {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &bullet_q {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &weapon_vfx_q {
+        commands.entity(entity).despawn_recursive();
+    }
     vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 
@@ -257,6 +277,9 @@ fn toggle_terrain_mode_on_key(
     mut loaded_npcs: ResMut<npc::LoadedNpcs>,
     mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
+    grenade_q: Query<Entity, With<weapons::Grenade>>,
+    bullet_q: Query<Entity, With<weapons::Bullet>>,
+    weapon_vfx_q: Query<Entity, With<weapons::WeaponVfx>>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
@@ -279,6 +302,15 @@ fn toggle_terrain_mode_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_npcs.clear_and_despawn(&mut commands);
+    for entity in &grenade_q {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &bullet_q {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &weapon_vfx_q {
+        commands.entity(entity).despawn_recursive();
+    }
     vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 

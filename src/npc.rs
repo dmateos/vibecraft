@@ -10,6 +10,7 @@ use crate::world::{chunk_distance_sq, div_floor, get_block_world, Block, Chunk, 
 
 const NPC_HEIGHT: f32 = 1.72;
 const NPC_RADIUS: f32 = 0.28;
+const NPC_STEP_HEIGHT: f32 = 1.05;
 const NPC_GRAVITY: f32 = -22.0;
 const NPC_MAX_FALL: f32 = -30.0;
 const NPC_SPAWN_RADIUS_CHUNKS: i32 = 7;
@@ -522,6 +523,8 @@ pub fn tick_npcs(
             )
         {
             pos += x_step;
+        } else if let Some(stepped) = try_step_up_npc(pos, x_step, &world.chunks) {
+            pos = stepped;
         }
 
         let z_step = Vec3::new(0.0, 0.0, dir.y * npc.speed * dt);
@@ -533,6 +536,8 @@ pub fn tick_npcs(
             )
         {
             pos += z_step;
+        } else if let Some(stepped) = try_step_up_npc(pos, z_step, &world.chunks) {
+            pos = stepped;
         }
 
         npc.vertical_velocity = (npc.vertical_velocity + NPC_GRAVITY * dt).max(NPC_MAX_FALL);
@@ -619,6 +624,35 @@ fn collides_npc(chunks: &HashMap<IVec2, Chunk>, feet: Vec3) -> bool {
     }
 
     false
+}
+
+fn try_step_up_npc(current: Vec3, horizontal_delta: Vec3, chunks: &HashMap<IVec2, Chunk>) -> Option<Vec3> {
+    let raised = current + Vec3::Y * NPC_STEP_HEIGHT;
+    if collides_npc(chunks, raised) {
+        return None;
+    }
+
+    let moved = raised + horizontal_delta;
+    if collides_npc(chunks, moved) {
+        return None;
+    }
+    if enters_water(chunks, moved.x.floor() as i32, moved.z.floor() as i32) {
+        return None;
+    }
+
+    let mut snapped = moved;
+    let drop_step = 0.10;
+    let mut dropped = 0.0;
+    while dropped < NPC_STEP_HEIGHT + 0.15 {
+        let next = snapped - Vec3::Y * drop_step;
+        if collides_npc(chunks, next) {
+            break;
+        }
+        snapped = next;
+        dropped += drop_step;
+    }
+
+    Some(snapped)
 }
 
 #[inline]
