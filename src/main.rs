@@ -5,6 +5,7 @@ mod interact;
 mod materials;
 mod npc;
 mod player;
+mod sky;
 mod streaming;
 mod ui;
 mod water;
@@ -82,6 +83,7 @@ fn main() {
             Startup,
             (
                 setup,
+                sky::setup_sky,
                 clouds::setup_clouds,
                 npc::setup_npcs,
                 water::setup_water,
@@ -108,12 +110,15 @@ fn main() {
                 weapons::tick_bullets,
                 weapons::throw_grenade_on_key,
                 weapons::tick_grenades,
+                weapons::process_explosion_jobs,
+                weapons::process_dirty_chunk_remeshes,
                 weapons::tick_weapon_vfx,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
                 clouds::animate_clouds,
             ),
         )
+        .add_systems(Update, sky::update_sky)
         .add_systems(
             Update,
             (
@@ -217,6 +222,7 @@ fn regenerate_world_on_key(
     grenade_q: Query<Entity, With<weapons::Grenade>>,
     bullet_q: Query<Entity, With<weapons::Bullet>>,
     weapon_vfx_q: Query<Entity, With<weapons::WeaponVfx>>,
+    mut explosion_work: ResMut<weapons::ExplosionWorkQueue>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
@@ -256,6 +262,7 @@ fn regenerate_world_on_key(
     for entity in &weapon_vfx_q {
         commands.entity(entity).despawn_recursive();
     }
+    weapons::clear_explosion_work_queue(&mut explosion_work);
     vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 
@@ -280,6 +287,7 @@ fn toggle_terrain_mode_on_key(
     grenade_q: Query<Entity, With<weapons::Grenade>>,
     bullet_q: Query<Entity, With<weapons::Bullet>>,
     weapon_vfx_q: Query<Entity, With<weapons::WeaponVfx>>,
+    mut explosion_work: ResMut<weapons::ExplosionWorkQueue>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
 ) {
@@ -311,6 +319,7 @@ fn toggle_terrain_mode_on_key(
     for entity in &weapon_vfx_q {
         commands.entity(entity).despawn_recursive();
     }
+    weapons::clear_explosion_work_queue(&mut explosion_work);
     vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 

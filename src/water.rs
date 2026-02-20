@@ -76,10 +76,10 @@ pub fn setup_water(
 ) {
     let material = materials.add(WaterSurfaceMaterial {
         params: WaterMaterialParams {
-            shallow_color: Vec4::new(0.20, 0.62, 0.92, 0.90),
-            deep_color: Vec4::new(0.02, 0.10, 0.24, 0.95),
-            wave: Vec4::new(0.085, 2.9, 1.25, 0.5),
-            foam: Vec4::new(0.30, 0.0, 0.0, 0.0),
+            shallow_color: Vec4::new(0.10, 0.58, 0.88, 0.90),
+            deep_color: Vec4::new(0.01, 0.12, 0.36, 0.96),
+            wave: Vec4::new(0.080, 2.7, 1.15, 0.5),
+            foam: Vec4::new(0.26, 0.0, 0.0, 0.0),
             weather: Vec4::ZERO,
         },
     });
@@ -133,6 +133,7 @@ pub fn stream_water_around_camera(
         .iter()
         .copied()
         .filter(|pos| !loaded.entries.contains_key(pos))
+        .filter(|pos| world.chunks.contains_key(pos))
         .collect();
     to_spawn.sort_by_key(|pos| chunk_distance_sq(*pos, cam_chunk));
     to_spawn.truncate(MAX_WATER_CHUNKS_PER_TICK);
@@ -178,12 +179,15 @@ fn build_water_mesh_for_chunk(
             let wx = base_x + x as i32;
             let wz = base_z + z as i32;
             let surface = find_surface_y(chunks, wx, wz);
-            // Draw water only where terrain is meaningfully below sea level.
-            if surface >= SEA_LEVEL - 1 {
+            let surface_smooth = sample_surface_avg(chunks, wx, wz);
+            // Draw water where smoothed terrain lies below sea level.
+            if surface_smooth >= SEA_LEVEL as f32 - 0.05 {
                 continue;
             }
 
-            let depth = ((SEA_LEVEL - surface) as f32 / 24.0).clamp(0.0, 1.0);
+            let depth = ((SEA_LEVEL as f32 - surface_smooth) / 22.0).clamp(0.0, 1.0);
+            let shore_soften = ((SEA_LEVEL as f32 - surface as f32) / 4.0).clamp(0.0, 1.0);
+            let depth = depth * 0.82 + shore_soften * 0.18;
             let start = positions.len() as u32;
 
             positions.extend_from_slice(&[
@@ -225,4 +229,18 @@ fn find_surface_y(chunks: &std::collections::HashMap<IVec2, Chunk>, x: i32, z: i
         }
     }
     0
+}
+
+fn sample_surface_avg(chunks: &std::collections::HashMap<IVec2, Chunk>, x: i32, z: i32) -> f32 {
+    let mut sum = 0.0;
+    let mut wsum = 0.0;
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let w = if dx == 0 && dz == 0 { 0.32 } else { 0.085 };
+            let y = find_surface_y(chunks, x + dx, z + dz) as f32;
+            sum += y * w;
+            wsum += w;
+        }
+    }
+    if wsum > 0.0 { sum / wsum } else { SEA_LEVEL as f32 }
 }

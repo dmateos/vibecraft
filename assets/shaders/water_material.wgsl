@@ -39,7 +39,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let fresnel = pow(1.0 - max(dot(n, view_dir), 0.0), 3.0);
 
     let depth_input = clamp(in.color.r, 0.0, 1.0);
-    let depth_mix = clamp(depth_input * 0.95 + wave_h * 0.10, 0.0, 1.0);
+    let depth_mix = smoothstep(0.02, 0.98, clamp(depth_input * 0.98 + wave_h * 0.06, 0.0, 1.0));
     var col = mix(material.deep_color.rgb, material.shallow_color.rgb, depth_mix);
 
     let shoreline = smoothstep(0.0, 0.25, 1.0 - depth_input);
@@ -47,7 +47,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ripple = 0.5 + 0.5 * sin((wp.x + wp.z) * 0.23 + t * 2.6);
     let foam = max(shoreline * 1.1, crest * 0.7 + ripple * 0.35 * shoreline) * material.foam.x;
     col = col + vec3<f32>(foam);
-    let sky_reflect = mix(vec3<f32>(0.48, 0.66, 0.92), vec3<f32>(0.88, 0.95, 1.0), clamp(n.y, 0.0, 1.0));
+    let sky_reflect = mix(vec3<f32>(0.22, 0.54, 0.86), vec3<f32>(0.84, 0.94, 1.0), clamp(n.y, 0.0, 1.0));
     let glint = pow(max(dot(reflect(view_dir, n), -sun_dir), 0.0), 72.0) * 0.85;
     col = mix(col, sky_reflect, fresnel * (0.52 + material.weather.x * 0.22));
     col += vec3<f32>(sun + glint);
@@ -55,8 +55,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let dist = distance(wp, view.world_position);
     let fog_t = smoothstep(240.0, 860.0, dist);
-    col = mix(col, vec3<f32>(0.55, 0.8, 0.98), fog_t * 0.72);
-    col = saturate_color(col, 1.16);
+    col = mix(col, vec3<f32>(0.47, 0.74, 0.96), fog_t * 0.68);
+    col = saturate_color(col, 1.24);
 
     let alpha = mix(material.deep_color.a, 0.99, fresnel * 0.78 + shoreline * 0.12);
     return vec4<f32>(col, alpha);

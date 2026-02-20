@@ -142,19 +142,19 @@ pub fn apply_weather_to_materials(
 
     if let Some(water) = water_assets.get_mut(&water_handle.0) {
         water.params.shallow_color = Vec4::new(
-            0.20 + rain_darken * 0.03,
-            0.62 - rain_darken * 0.10,
-            0.92 - rain_darken * 0.16,
-            0.90,
+            0.10 + rain_darken * 0.02,
+            0.58 - rain_darken * 0.08,
+            0.88 - rain_darken * 0.13,
+            0.91,
         );
         water.params.deep_color = Vec4::new(
-            0.02,
-            0.10 - rain_darken * 0.04,
-            0.24 - rain_darken * 0.08,
-            0.95,
+            0.01,
+            0.12 - rain_darken * 0.03,
+            0.36 - rain_darken * 0.10,
+            0.96,
         );
-        water.params.wave = Vec4::new(0.085 + rain_darken * 0.022, 2.9 + rain_darken * 1.9, 1.25 + rain_darken * 0.55, 0.5);
-        water.params.foam = Vec4::new(0.30 + rain_darken * 0.24, 0.0, 0.0, 0.0);
+        water.params.wave = Vec4::new(0.080 + rain_darken * 0.020, 2.7 + rain_darken * 1.8, 1.15 + rain_darken * 0.52, 0.5);
+        water.params.foam = Vec4::new(0.26 + rain_darken * 0.22, 0.0, 0.0, 0.0);
         water.params.weather = Vec4::new(rain_darken, 0.0, 0.0, 0.0);
     }
 

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use bevy::math::primitives::Cuboid;
 use bevy::pbr::NotShadowCaster;
@@ -20,6 +20,8 @@ const GRENADE_FUSE: f32 = 1.55;
 const GRENADE_RADIUS: i32 = 4;
 const MUZZLE_FLASH_TIME: f32 = 0.045;
 const EXPLOSION_FX_TIME: f32 = 0.34;
+const EXPLOSION_EDITS_PER_TICK: usize = 320;
+const EXPLOSION_REMESHES_PER_TICK: usize = 8;
 
 #[derive(Component)]
 pub struct Grenade {
@@ -48,6 +50,19 @@ pub struct MuzzleFlashFx {
 pub struct ExplosionFx {
     age: f32,
     max_scale: f32,
+}
+
+#[derive(Default)]
+struct ExplosionJob {
+    cells: Vec<IVec3>,
+    cursor: usize,
+}
+
+#[derive(Resource, Default)]
+pub struct ExplosionWorkQueue {
+    jobs: VecDeque<ExplosionJob>,
+    dirty_order: VecDeque<IVec2>,
+    dirty_set: HashSet<IVec2>,
 }
 
 #[derive(Resource)]
@@ -131,6 +146,7 @@ pub fn setup_weapons(
         explosion_mesh,
         explosion_material,
     });
+    commands.insert_resource(ExplosionWorkQueue::default());
 }
 
 pub fn ensure_view_gun(
@@ -357,10 +373,9 @@ pub fn tick_grenades(
     time: Res<Time>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Grenade)>,
-    mut world: ResMut<VoxelWorld>,
     assets: Res<WeaponAssets>,
-    loaded: Res<LoadedChunks>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut work: ResMut<ExplosionWorkQueue>,
+    world: Res<VoxelWorld>,
 ) {
     let dt = time.delta_seconds();
 
@@ -389,7 +404,7 @@ pub fn tick_grenades(
             transform.translation.y.floor() as i32,
             transform.translation.z.floor() as i32,
         );
-        explode_blocks(center, GRENADE_RADIUS, &mut world.chunks, &loaded, &mut meshes);
+        enqueue_explosion(&mut work, center, GRENADE_RADIUS);
         spawn_explosion_fx(
             &mut commands,
             &assets,
@@ -399,6 +414,63 @@ pub fn tick_grenades(
 
         commands.entity(entity).despawn_recursive();
     }
+}
+
+pub fn process_explosion_jobs(
+    mut work: ResMut<ExplosionWorkQueue>,
+    mut world: ResMut<VoxelWorld>,
+) {
+    let mut budget = EXPLOSION_EDITS_PER_TICK;
+
+    while budget > 0 {
+        let Some(mut job) = work.jobs.pop_front() else {
+            break;
+        };
+
+        while budget > 0 && job.cursor < job.cells.len() {
+            let cell = job.cells[job.cursor];
+            job.cursor += 1;
+            budget -= 1;
+
+            if set_block_world(&mut world.chunks, cell.x, cell.y, cell.z, Block::Air) {
+                mark_dirty_chunk(
+                    &mut work,
+                    IVec2::new(
+                        div_floor(cell.x, CHUNK_SIZE as i32),
+                        div_floor(cell.z, CHUNK_SIZE as i32),
+                    ),
+                );
+            }
+        }
+
+        if job.cursor < job.cells.len() {
+            work.jobs.push_front(job);
+            break;
+        }
+    }
+}
+
+pub fn process_dirty_chunk_remeshes(
+    mut work: ResMut<ExplosionWorkQueue>,
+    world: Res<VoxelWorld>,
+    loaded: Res<LoadedChunks>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let mut count = 0usize;
+    while count < EXPLOSION_REMESHES_PER_TICK {
+        let Some(chunk) = work.dirty_order.pop_front() else {
+            break;
+        };
+        work.dirty_set.remove(&chunk);
+        remesh_affected_chunks(chunk, &world.chunks, &loaded, &mut meshes);
+        count += 1;
+    }
+}
+
+pub fn clear_explosion_work_queue(work: &mut ExplosionWorkQueue) {
+    work.jobs.clear();
+    work.dirty_order.clear();
+    work.dirty_set.clear();
 }
 
 pub fn tick_weapon_vfx(
@@ -427,15 +499,9 @@ pub fn tick_weapon_vfx(
     }
 }
 
-fn explode_blocks(
-    center: IVec3,
-    radius: i32,
-    chunks: &mut std::collections::HashMap<IVec2, crate::world::Chunk>,
-    loaded: &LoadedChunks,
-    meshes: &mut Assets<Mesh>,
-) {
+fn enqueue_explosion(work: &mut ExplosionWorkQueue, center: IVec3, radius: i32) {
     let r2 = radius * radius;
-    let mut changed = Vec::new();
+    let mut cells = Vec::new();
 
     for z in center.z - radius..=center.z + radius {
         for y in center.y - radius..=center.y + radius {
@@ -446,14 +512,18 @@ fn explode_blocks(
                 if dx * dx + dy * dy + dz * dz > r2 {
                     continue;
                 }
-                if set_block_world(chunks, x, y, z, Block::Air) {
-                    changed.push(IVec3::new(x, y, z));
-                }
+                cells.push(IVec3::new(x, y, z));
             }
         }
     }
 
-    remesh_for_cells(changed.into_iter(), chunks, loaded, meshes);
+    work.jobs.push_back(ExplosionJob { cells, cursor: 0 });
+}
+
+fn mark_dirty_chunk(work: &mut ExplosionWorkQueue, chunk: IVec2) {
+    if work.dirty_set.insert(chunk) {
+        work.dirty_order.push_back(chunk);
+    }
 }
 
 fn spawn_explosion_fx(commands: &mut Commands, assets: &WeaponAssets, at: Vec3, radius: f32) {
