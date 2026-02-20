@@ -61,6 +61,9 @@ pub struct Npc {
 pub struct NpcRig {
     pub left_leg: Entity,
     pub right_leg: Entity,
+    pub left_arm: Entity,
+    pub right_arm: Entity,
+    pub quadruped: bool,
 }
 
 #[derive(Resource, Default)]
@@ -285,8 +288,8 @@ pub fn stream_npcs_around_camera(
             NpcKind::Friendly
         };
         let speed = match kind {
-            NpcKind::Friendly => 0.85 + ((seed >> 20) as f32 / 255.0) * 0.65,
-            NpcKind::Hostile => 1.35 + ((seed >> 20) as f32 / 255.0) * 0.65,
+            NpcKind::Friendly => 0.62 + ((seed >> 20) as f32 / 255.0) * 0.48,
+            NpcKind::Hostile => 0.98 + ((seed >> 20) as f32 / 255.0) * 0.58,
         };
 
         let torso_material = match kind {
@@ -328,57 +331,155 @@ pub fn stream_npcs_around_camera(
             ))
             .id();
 
-        let head = commands
-            .spawn(PbrBundle {
-                mesh: assets.mesh.clone(),
-                material: assets.skin.clone(),
-                transform: Transform {
-                    translation: Vec3::new(0.0, 1.48, 0.0),
-                    scale: Vec3::new(0.36, 0.36, 0.36),
+        let (head, torso, left_leg, right_leg, left_arm, right_arm, quadruped) = if kind == NpcKind::Hostile {
+            let head = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.hostile.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 0.98, -0.42),
+                        scale: Vec3::new(0.42, 0.32, 0.52),
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            })
-            .id();
-
-        let torso = commands
-            .spawn(PbrBundle {
-                mesh: assets.mesh.clone(),
-                material: torso_material,
-                transform: Transform {
-                    translation: Vec3::new(0.0, 0.94, 0.0),
-                    scale: Vec3::new(0.56, 0.72, 0.30),
+                })
+                .id();
+            let torso = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.hostile.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 0.78, 0.0),
+                        scale: Vec3::new(0.82, 0.44, 1.10),
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            })
-            .id();
-
-        let left_leg = commands
-            .spawn(PbrBundle {
-                mesh: assets.mesh.clone(),
-                material: assets.skin.clone(),
-                transform: Transform {
-                    translation: Vec3::new(-0.16, 0.34, 0.0),
-                    scale: Vec3::new(0.16, 0.68, 0.18),
+                })
+                .id();
+            let left_leg = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(-0.30, 0.30, 0.34),
+                        scale: Vec3::new(0.16, 0.60, 0.16),
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            })
-            .id();
-
-        let right_leg = commands
-            .spawn(PbrBundle {
-                mesh: assets.mesh.clone(),
-                material: assets.skin.clone(),
-                transform: Transform {
-                    translation: Vec3::new(0.16, 0.34, 0.0),
-                    scale: Vec3::new(0.16, 0.68, 0.18),
+                })
+                .id();
+            let right_leg = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.30, 0.30, 0.34),
+                        scale: Vec3::new(0.16, 0.60, 0.16),
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            })
-            .id();
+                })
+                .id();
+            let left_arm = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(-0.30, 0.30, -0.28),
+                        scale: Vec3::new(0.16, 0.60, 0.16),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let right_arm = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.30, 0.30, -0.28),
+                        scale: Vec3::new(0.16, 0.60, 0.16),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            (head, torso, left_leg, right_leg, left_arm, right_arm, true)
+        } else {
+            let head = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 1.48, 0.0),
+                        scale: Vec3::new(0.36, 0.36, 0.36),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let torso = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: torso_material,
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 0.94, 0.0),
+                        scale: Vec3::new(0.56, 0.72, 0.30),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let left_leg = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(-0.16, 0.34, 0.0),
+                        scale: Vec3::new(0.16, 0.68, 0.18),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let right_leg = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.16, 0.34, 0.0),
+                        scale: Vec3::new(0.16, 0.68, 0.18),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let left_arm = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(-0.36, 1.02, 0.0),
+                        scale: Vec3::new(0.14, 0.52, 0.16),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            let right_arm = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: assets.skin.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.36, 1.02, 0.0),
+                        scale: Vec3::new(0.14, 0.52, 0.16),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            (head, torso, left_leg, right_leg, left_arm, right_arm, false)
+        };
 
         commands
             .entity(root)
@@ -386,9 +487,14 @@ pub fn stream_npcs_around_camera(
             .add_child(torso)
             .add_child(left_leg)
             .add_child(right_leg)
+            .add_child(left_arm)
+            .add_child(right_arm)
             .insert(NpcRig {
                 left_leg,
                 right_leg,
+                left_arm,
+                right_arm,
+                quadruped,
             });
 
         loaded.entries.insert(cell, root);
@@ -497,7 +603,7 @@ pub fn tick_npcs(
 
     let dt = time.delta_seconds();
     let player_pos = cam.translation;
-    let mut leg_updates: Vec<(Entity, Entity, f32)> = Vec::new();
+    let mut rig_updates: Vec<(Entity, Entity, Entity, Entity, f32, bool)> = Vec::new();
 
     if ui.ttl > 0.0 {
         ui.ttl = (ui.ttl - dt).max(0.0);
@@ -593,7 +699,9 @@ pub fn tick_npcs(
             }
         }
 
-        if desired_dir.length_squared() > 0.001 {
+        let moving_intent = desired_dir.length_squared() > 0.001;
+        let mut turn_mag = 0.0f32;
+        if moving_intent {
             let base_heading = desired_dir.y.atan2(desired_dir.x);
             let target_heading = choose_walk_heading(
                 npc.heading,
@@ -604,25 +712,31 @@ pub fn tick_npcs(
                 &world.chunks,
             );
             let delta = wrap_angle(target_heading - npc.heading);
+            turn_mag = delta.abs();
             npc.heading += delta.clamp(-2.2 * dt, 2.2 * dt);
         }
 
         let dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
+        let mut move_speed = if moving_intent { npc.speed } else { 0.0 };
+        let turn_slow = (1.0 - (turn_mag / std::f32::consts::PI) * 0.55).clamp(0.45, 1.0);
+        move_speed *= turn_slow;
         let ahead = transform.translation + Vec3::new(dir.x * 0.9, -0.05, dir.y * 0.9);
-        if !has_support(&world.chunks, ahead.x.floor() as i32, ahead.z.floor() as i32, ahead.y.floor() as i32)
-            || enters_water(&world.chunks, ahead.x.floor() as i32, ahead.z.floor() as i32)
-            || collides_npc(
-                &world.chunks,
-                transform.translation + Vec3::new(dir.x * npc.speed * dt, 0.0, dir.y * npc.speed * dt),
-            )
-        {
-            npc.heading += (next_rand(&mut npc.rng) - 0.5) * 2.6;
+        if move_speed > 0.001 {
+            if !has_support(&world.chunks, ahead.x.floor() as i32, ahead.z.floor() as i32, ahead.y.floor() as i32)
+                || enters_water(&world.chunks, ahead.x.floor() as i32, ahead.z.floor() as i32)
+                || collides_npc(
+                    &world.chunks,
+                    transform.translation + Vec3::new(dir.x * move_speed * dt, 0.0, dir.y * move_speed * dt),
+                )
+            {
+                npc.heading += (next_rand(&mut npc.rng) - 0.5) * 2.6;
+            }
         }
 
         let dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
         let mut pos = transform.translation;
 
-        let x_step = Vec3::new(dir.x * npc.speed * dt, 0.0, 0.0);
+        let x_step = Vec3::new(dir.x * move_speed * dt, 0.0, 0.0);
         if !collides_npc(&world.chunks, pos + x_step)
             && !enters_water(
                 &world.chunks,
@@ -635,7 +749,7 @@ pub fn tick_npcs(
             pos = stepped;
         }
 
-        let z_step = Vec3::new(0.0, 0.0, dir.y * npc.speed * dt);
+        let z_step = Vec3::new(0.0, 0.0, dir.y * move_speed * dt);
         if !collides_npc(&world.chunks, pos + z_step)
             && !enters_water(
                 &world.chunks,
@@ -672,21 +786,32 @@ pub fn tick_npcs(
         }
 
         transform.translation = pos;
-        transform.rotation = Quat::from_rotation_y(-npc.heading + std::f32::consts::FRAC_PI_2);
+        let yaw = -npc.heading
+            + std::f32::consts::FRAC_PI_2
+            + if rig.quadruped { std::f32::consts::PI } else { 0.0 };
+        transform.rotation = Quat::from_rotation_y(yaw);
 
         let stride = (horiz_speed / 2.2).clamp(0.0, 1.0);
         let phase = (time.elapsed_seconds() * (6.0 + stride * 5.0)) + (npc.rng as f32 * 0.0001);
         let swing = phase.sin() * 0.20 * stride;
 
-        leg_updates.push((rig.left_leg, rig.right_leg, swing));
+        rig_updates.push((rig.left_leg, rig.right_leg, rig.left_arm, rig.right_arm, swing, rig.quadruped));
     }
 
-    for (left_leg, right_leg, swing) in leg_updates {
+    for (left_leg, right_leg, left_arm, right_arm, swing, quadruped) in rig_updates {
+        let leg_swing = if quadruped { swing * 1.25 } else { swing };
+        let arm_swing = if quadruped { swing * 1.10 } else { swing * 0.9 };
         if let Ok(mut left) = qset.p1().get_mut(left_leg) {
-            left.rotation = Quat::from_rotation_x(swing);
+            left.rotation = Quat::from_rotation_x(leg_swing);
         }
         if let Ok(mut right) = qset.p1().get_mut(right_leg) {
-            right.rotation = Quat::from_rotation_x(-swing);
+            right.rotation = Quat::from_rotation_x(-leg_swing);
+        }
+        if let Ok(mut left) = qset.p1().get_mut(left_arm) {
+            left.rotation = Quat::from_rotation_x(-arm_swing);
+        }
+        if let Ok(mut right) = qset.p1().get_mut(right_arm) {
+            right.rotation = Quat::from_rotation_x(arm_swing);
         }
     }
 }
