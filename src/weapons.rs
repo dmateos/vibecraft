@@ -6,6 +6,7 @@ use bevy::prelude::*;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
+use crate::npc::{LoadedNpcs, Npc};
 use crate::player::FlyCam;
 use crate::world::{
     div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
@@ -22,6 +23,7 @@ const MUZZLE_FLASH_TIME: f32 = 0.045;
 const EXPLOSION_FX_TIME: f32 = 0.34;
 const EXPLOSION_EDITS_PER_TICK: usize = 320;
 const EXPLOSION_REMESHES_PER_TICK: usize = 8;
+const GUN_DAMAGE: f32 = 34.0;
 
 #[derive(Component)]
 pub struct Grenade {
@@ -305,6 +307,11 @@ pub fn tick_bullets(
     mut q: Query<(Entity, &mut Transform, &mut Bullet)>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
+    mut loaded_npcs: ResMut<LoadedNpcs>,
+    mut npc_q: ParamSet<(
+        Query<(Entity, &Transform, &Npc)>,
+        Query<&mut Npc>,
+    )>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let dt = time.delta_seconds();
@@ -318,8 +325,27 @@ pub fn tick_bullets(
 
         let start = transform.translation;
         let end = start + bullet.velocity * dt;
+        let npc_hit = raycast_npc(start, end, &npc_q.p0());
+        let block_hit = raycast_block(start, end, &world.chunks);
 
-        if let Some(hit) = raycast_block(start, end, &world.chunks) {
+        let npc_dist = npc_hit.map(|(_, d)| d).unwrap_or(f32::INFINITY);
+        let block_dist = block_hit.map(|(_, d)| d).unwrap_or(f32::INFINITY);
+
+        if npc_dist < block_dist {
+            if let Some((npc_entity, _)) = npc_hit {
+                if let Ok(mut npc) = npc_q.p1().get_mut(npc_entity) {
+                    npc.health -= GUN_DAMAGE;
+                    if npc.health <= 0.0 {
+                        commands.entity(npc_entity).despawn_recursive();
+                        loaded_npcs.remove_entity(npc_entity);
+                    }
+                }
+                commands.entity(entity).despawn_recursive();
+                continue;
+            }
+        }
+
+        if let Some((hit, _)) = block_hit {
             if set_block_world(&mut world.chunks, hit.x, hit.y, hit.z, Block::Air) {
                 remesh_for_cells(
                     [IVec3::new(hit.x, hit.y, hit.z)].into_iter(),
@@ -571,7 +597,7 @@ fn raycast_block(
     start: Vec3,
     end: Vec3,
     chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
-) -> Option<IVec3> {
+) -> Option<(IVec3, f32)> {
     let delta = end - start;
     let dist = delta.length().max(0.0001);
     let dir = delta / dist;
@@ -590,10 +616,43 @@ fn raycast_block(
         last = cell;
 
         if get_block_world(chunks, cell.x, cell.y, cell.z) != Block::Air {
-            return Some(cell);
+            return Some((cell, t));
         }
         t += step;
     }
 
     None
+}
+
+fn raycast_npc(start: Vec3, end: Vec3, npcs: &Query<(Entity, &Transform, &Npc)>) -> Option<(Entity, f32)> {
+    let mut best: Option<(Entity, f32)> = None;
+    let seg = end - start;
+    let seg_len_sq = seg.length_squared().max(0.0001);
+    let seg_len = seg_len_sq.sqrt();
+
+    for (entity, transform, npc) in npcs.iter() {
+        if npc.health <= 0.0 {
+            continue;
+        }
+
+        let feet = transform.translation;
+        let center = feet + Vec3::new(0.0, 0.95, 0.0);
+        let t = ((center - start).dot(seg) / seg_len_sq).clamp(0.0, 1.0);
+        let p = start + seg * t;
+
+        if p.y < feet.y - 0.12 || p.y > feet.y + 1.95 {
+            continue;
+        }
+        let horiz = (p.xz() - feet.xz()).length();
+        if horiz > 0.58 {
+            continue;
+        }
+
+        let hit_dist = seg_len * t;
+        if best.map(|(_, d)| hit_dist < d).unwrap_or(true) {
+            best = Some((entity, hit_dist));
+        }
+    }
+
+    best
 }

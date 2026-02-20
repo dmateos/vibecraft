@@ -41,6 +41,7 @@ pub enum NpcKind {
 #[derive(Component)]
 pub struct Npc {
     pub kind: NpcKind,
+    pub health: f32,
     pub heading: f32,
     pub speed: f32,
     pub turn_timer: f32,
@@ -78,6 +79,10 @@ impl LoadedNpcs {
         for entity in entities {
             commands.entity(entity).despawn_recursive();
         }
+    }
+
+    pub fn remove_entity(&mut self, entity: Entity) {
+        self.entries.retain(|_, e| *e != entity);
     }
 }
 
@@ -313,6 +318,7 @@ pub fn stream_npcs_around_camera(
                 },
                 Npc {
                     kind,
+                    health: if kind == NpcKind::Hostile { 72.0 } else { 48.0 },
                     heading,
                     speed,
                     turn_timer: 0.8 + ((seed >> 10) as f32 / 255.0) * 2.2,
