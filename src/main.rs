@@ -53,6 +53,7 @@ fn main() {
         )))
         .insert_resource(npc::NpcUiState::default())
         .insert_resource(npc::PlayerVitals::default())
+        .insert_resource(npc::NpcStimulus::default())
         .insert_resource(water::LoadedWater::default())
         .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
             0.08,
@@ -118,6 +119,8 @@ fn main() {
                 clouds::animate_clouds,
             ),
         )
+        .add_systems(Update, npc::capture_player_noise)
+        .add_systems(Update, npc::draw_npc_debug_gizmos)
         .add_systems(Update, sky::update_sky)
         .add_systems(
             Update,

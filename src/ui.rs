@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use crate::config::CHUNK_SIZE;
 use crate::generation::{GenerationQueue, GenerationRuntimeStats};
 use crate::interact::PlacementPalette;
-use crate::npc::{NpcUiState, PlayerVitals};
+use crate::npc::{Npc, NpcKind, NpcStimulus, NpcUiState, PlayerVitals};
 use crate::player::FlyCam;
 use crate::streaming::StreamingRuntimeStats;
 use crate::weather::WeatherState;
@@ -191,7 +191,9 @@ pub fn update_debug_hud_text(
     streaming_stats: Res<StreamingRuntimeStats>,
     gen_queue: Res<GenerationQueue>,
     gen_stats: Res<GenerationRuntimeStats>,
+    npc_stim: Res<NpcStimulus>,
     cam_q: Query<&Transform, With<FlyCam>>,
+    npc_q: Query<(&Transform, &Npc)>,
     mut q: Query<(&mut Text, &mut Style), With<DebugHudText>>,
 ) {
     let Ok((mut text, mut style)) = q.get_single_mut() else {
@@ -215,8 +217,62 @@ pub fn update_debug_hud_text(
         (Vec3::ZERO, IVec2::ZERO)
     };
 
+    let mut npc_total = 0usize;
+    let mut npc_friendly = 0usize;
+    let mut npc_hostile = 0usize;
+    let mut nearest: Option<(f32, Vec3, NpcKind, bool, f32, f32, f32)> = None;
+    for (t, npc) in &npc_q {
+        npc_total += 1;
+        match npc.kind {
+            NpcKind::Friendly => npc_friendly += 1,
+            NpcKind::Hostile => npc_hostile += 1,
+        }
+        let d = cam_pos.distance(t.translation);
+        if nearest.map(|n| d < n.0).unwrap_or(true) {
+            nearest = Some((
+                d,
+                t.translation,
+                npc.kind,
+                npc.follow_player,
+                npc.last_seen_timer,
+                npc.investigate_timer,
+                npc.stuck_timer,
+            ));
+        }
+    }
+    let nearest_line = if let Some((dist, pos, kind, follow, seen_t, hear_t, stuck_t)) = nearest {
+        let kind_str = match kind {
+            NpcKind::Friendly => "Friendly",
+            NpcKind::Hostile => "Hostile",
+        };
+        let mode = match kind {
+            NpcKind::Friendly => {
+                if follow {
+                    "Follow"
+                } else {
+                    "Wander"
+                }
+            }
+            NpcKind::Hostile => {
+                if seen_t > 0.05 {
+                    "Chase(LOS)"
+                } else if hear_t > 0.05 {
+                    "Investigate(sound)"
+                } else {
+                    "Patrol"
+                }
+            }
+        };
+        format!(
+            "Nearest NPC: {} @ {:.1}m mode={} seen={:.1}s hear={:.1}s stuck={:.2}s pos=({:.1},{:.1},{:.1})",
+            kind_str, dist, mode, seen_t, hear_t, stuck_t, pos.x, pos.y, pos.z
+        )
+    } else {
+        "Nearest NPC: none".to_string()
+    };
+
     text.sections[0].value = format!(
-        "DEBUG [F3]\nFPS now: {:.1} | Avg frame: {:.2} ms | 1% low proxy: {:.1} fps\nChunks loaded(world/render): {}/{} | desired: {} | generated tick: {} | meshed tick: {}\nGeneration queue plans: {} | ops applied tick: {} | plans completed: {}\nCam pos: ({:.1}, {:.1}, {:.1}) | Cam chunk: ({}, {})",
+        "DEBUG [F3]\nFPS now: {:.1} | Avg frame: {:.2} ms | 1% low proxy: {:.1} fps\nChunks loaded(world/render): {}/{} | desired: {} | generated tick: {} | meshed tick: {}\nGeneration queue plans: {} | ops applied tick: {} | plans completed: {}\nCam pos: ({:.1}, {:.1}, {:.1}) | Cam chunk: ({}, {})\nNPCs total/friendly/hostile: {}/{}/{} | noise ttl: {:.1}s @ ({:.1},{:.1},{:.1})\n{}",
         frame.fps_now,
         frame.avg_ms,
         frame.low_1pct_fps_proxy,
@@ -233,5 +289,13 @@ pub fn update_debug_hud_text(
         cam_pos.z,
         cam_chunk.x,
         cam_chunk.y,
+        npc_total,
+        npc_friendly,
+        npc_hostile,
+        npc_stim.ttl,
+        npc_stim.loud_pos.x,
+        npc_stim.loud_pos.y,
+        npc_stim.loud_pos.z,
+        nearest_line,
     );
 }

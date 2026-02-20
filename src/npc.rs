@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::math::primitives::Cuboid;
 use bevy::prelude::*;
+use bevy::input::mouse::MouseButton;
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 use crate::generation::PromptInputState;
 use crate::player::FlyCam;
+use crate::ui::DebugOverlayState;
 use crate::world::{chunk_distance_sq, div_floor, get_block_world, Block, Chunk, VoxelWorld};
 
 const NPC_HEIGHT: f32 = 1.72;
@@ -22,6 +24,13 @@ const FRIENDLY_INTERACT_RANGE: f32 = 4.8;
 const HOSTILE_AGGRO_RANGE: f32 = 18.0;
 const HOSTILE_ATTACK_RANGE: f32 = 1.45;
 const WATER_AVOID_LEVEL: i32 = SEA_LEVEL;
+const HOSTILE_VISION_RANGE: f32 = 32.0;
+const FRIENDLY_VISION_RANGE: f32 = 18.0;
+const HOSTILE_VISION_DOT: f32 = -0.15;
+const FRIENDLY_VISION_DOT: f32 = -0.40;
+const HOSTILE_HEARING_RANGE: f32 = 52.0;
+const NPC_SIGHT_MEMORY: f32 = 3.0;
+const NPC_INVESTIGATE_MEMORY: f32 = 4.5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NpcKind {
@@ -40,6 +49,12 @@ pub struct Npc {
     pub follow_player: bool,
     pub attack_cooldown: f32,
     pub chat_cooldown: f32,
+    pub last_seen_player: Vec3,
+    pub last_seen_timer: f32,
+    pub investigate_target: Vec3,
+    pub investigate_timer: f32,
+    pub last_pos: Vec3,
+    pub stuck_timer: f32,
 }
 
 #[derive(Component)]
@@ -65,6 +80,21 @@ impl LoadedNpcs {
 
 #[derive(Resource)]
 pub struct NpcStreamTimer(pub Timer);
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct NpcStimulus {
+    pub loud_pos: Vec3,
+    pub ttl: f32,
+}
+
+impl Default for NpcStimulus {
+    fn default() -> Self {
+        Self {
+            loud_pos: Vec3::ZERO,
+            ttl: 0.0,
+        }
+    }
+}
 
 #[derive(Resource, Debug, Clone)]
 pub struct NpcUiState {
@@ -288,6 +318,12 @@ pub fn stream_npcs_around_camera(
                     follow_player: false,
                     attack_cooldown: 0.0,
                     chat_cooldown: 1.5 + ((seed >> 2) as f32 / 255.0) * 3.0,
+                    last_seen_player: Vec3::ZERO,
+                    last_seen_timer: 0.0,
+                    investigate_target: Vec3::ZERO,
+                    investigate_timer: 0.0,
+                    last_pos: Vec3::new(wx as f32 + 0.5, ground_y as f32, wz as f32 + 0.5),
+                    stuck_timer: 0.0,
                 },
             ))
             .id();
@@ -359,6 +395,37 @@ pub fn stream_npcs_around_camera(
     }
 }
 
+pub fn capture_player_noise(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    prompt: Res<PromptInputState>,
+    cam_q: Query<&Transform, With<FlyCam>>,
+    mut stim: ResMut<NpcStimulus>,
+) {
+    stim.ttl = (stim.ttl - time.delta_seconds()).max(0.0);
+    if prompt.active {
+        return;
+    }
+
+    let mut loud = false;
+    if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::KeyZ) {
+        loud = true;
+    }
+    if buttons.just_pressed(MouseButton::Left) {
+        loud = true;
+    }
+    if !loud {
+        return;
+    }
+
+    let Ok(cam) = cam_q.get_single() else {
+        return;
+    };
+    stim.loud_pos = cam.translation;
+    stim.ttl = 1.4;
+}
+
 pub fn npc_interactions(
     keys: Res<ButtonInput<KeyCode>>,
     prompt: Res<PromptInputState>,
@@ -418,6 +485,7 @@ pub fn tick_npcs(
     cam_q: Query<&Transform, (With<FlyCam>, Without<Npc>)>,
     mut ui: ResMut<NpcUiState>,
     mut vitals: ResMut<PlayerVitals>,
+    stim: Res<NpcStimulus>,
     mut qset: ParamSet<(
         Query<(&mut Transform, &mut Npc, &NpcRig), Without<FlyCam>>,
         Query<&mut Transform, (Without<Npc>, Without<FlyCam>)>,
@@ -441,9 +509,37 @@ pub fn tick_npcs(
     for (mut transform, mut npc, rig) in &mut qset.p0() {
         npc.attack_cooldown = (npc.attack_cooldown - dt).max(0.0);
         npc.chat_cooldown = (npc.chat_cooldown - dt).max(0.0);
+        npc.last_seen_timer = (npc.last_seen_timer - dt).max(0.0);
+        npc.investigate_timer = (npc.investigate_timer - dt).max(0.0);
 
         let to_player = player_pos - transform.translation;
         let player_dist = to_player.length();
+        let can_see_player = match npc.kind {
+            NpcKind::Friendly => can_see_target(
+                transform.translation,
+                npc.heading,
+                player_pos,
+                FRIENDLY_VISION_RANGE,
+                FRIENDLY_VISION_DOT,
+                &world.chunks,
+            ),
+            NpcKind::Hostile => can_see_target(
+                transform.translation,
+                npc.heading,
+                player_pos,
+                HOSTILE_VISION_RANGE,
+                HOSTILE_VISION_DOT,
+                &world.chunks,
+            ),
+        };
+        if can_see_player {
+            npc.last_seen_player = player_pos;
+            npc.last_seen_timer = NPC_SIGHT_MEMORY;
+        }
+        if stim.ttl > 0.0 && transform.translation.distance(stim.loud_pos) <= HOSTILE_HEARING_RANGE {
+            npc.investigate_target = stim.loud_pos;
+            npc.investigate_timer = NPC_INVESTIGATE_MEMORY;
+        }
 
         let mut desired_dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
         match npc.kind {
@@ -474,8 +570,12 @@ pub fn tick_npcs(
                 }
             }
             NpcKind::Hostile => {
-                if player_dist <= HOSTILE_AGGRO_RANGE {
+                if can_see_player || player_dist <= HOSTILE_AGGRO_RANGE {
                     desired_dir = to_player.xz().normalize_or_zero();
+                } else if npc.last_seen_timer > 0.0 {
+                    desired_dir = (npc.last_seen_player - transform.translation).xz().normalize_or_zero();
+                } else if npc.investigate_timer > 0.0 {
+                    desired_dir = (npc.investigate_target - transform.translation).xz().normalize_or_zero();
                 } else {
                     npc.turn_timer -= dt;
                     if npc.turn_timer <= 0.0 {
@@ -494,7 +594,15 @@ pub fn tick_npcs(
         }
 
         if desired_dir.length_squared() > 0.001 {
-            let target_heading = desired_dir.y.atan2(desired_dir.x);
+            let base_heading = desired_dir.y.atan2(desired_dir.x);
+            let target_heading = choose_walk_heading(
+                npc.heading,
+                base_heading,
+                transform.translation,
+                npc.speed,
+                dt,
+                &world.chunks,
+            );
             let delta = wrap_angle(target_heading - npc.heading);
             npc.heading += delta.clamp(-2.2 * dt, 2.2 * dt);
         }
@@ -551,6 +659,17 @@ pub fn tick_npcs(
         let horiz_speed = Vec2::new(pos.x - transform.translation.x, pos.z - transform.translation.z)
             .length()
             / dt.max(0.0001);
+        let moved = Vec2::new(pos.x - npc.last_pos.x, pos.z - npc.last_pos.z).length();
+        if moved < 0.018 {
+            npc.stuck_timer += dt;
+        } else {
+            npc.stuck_timer = 0.0;
+            npc.last_pos = pos;
+        }
+        if npc.stuck_timer > 0.9 {
+            npc.heading += (next_rand(&mut npc.rng) - 0.5) * 3.4;
+            npc.stuck_timer = 0.0;
+        }
 
         transform.translation = pos;
         transform.rotation = Quat::from_rotation_y(-npc.heading + std::f32::consts::FRAC_PI_2);
@@ -569,6 +688,96 @@ pub fn tick_npcs(
         if let Ok(mut right) = qset.p1().get_mut(right_leg) {
             right.rotation = Quat::from_rotation_x(-swing);
         }
+    }
+}
+
+pub fn draw_npc_debug_gizmos(
+    overlay: Res<DebugOverlayState>,
+    world: Res<VoxelWorld>,
+    cam_q: Query<&Transform, With<FlyCam>>,
+    npc_q: Query<(&Transform, &Npc)>,
+    mut gizmos: Gizmos,
+) {
+    if !overlay.visible {
+        return;
+    }
+
+    let Ok(cam) = cam_q.get_single() else {
+        return;
+    };
+    let cam_pos = cam.translation;
+
+    let mut nearest: Option<(f32, Vec3, &Npc)> = None;
+    for (t, npc) in &npc_q {
+        let d = cam_pos.distance(t.translation);
+        if nearest.map(|n| d < n.0).unwrap_or(true) {
+            nearest = Some((d, t.translation, npc));
+        }
+    }
+    let Some((_dist, npc_pos, npc)) = nearest else {
+        return;
+    };
+
+    let body_center = npc_pos + Vec3::new(0.0, NPC_HEIGHT * 0.5, 0.0);
+    let eye = npc_pos + Vec3::new(0.0, 1.45, 0.0);
+    let heading = Vec3::new(npc.heading.cos(), 0.0, npc.heading.sin()).normalize_or_zero();
+    let heading_color = if npc.stuck_timer > 0.2 {
+        Color::srgb(1.0, 0.55, 0.18)
+    } else {
+        Color::srgb(0.16, 0.92, 0.36)
+    };
+
+    gizmos.cuboid(
+        Transform::from_translation(body_center).with_scale(Vec3::new(0.72, NPC_HEIGHT, 0.72)),
+        Color::srgba(1.0, 1.0, 1.0, 0.38),
+    );
+    gizmos.line(eye, eye + heading * 3.2, heading_color);
+
+    let target = match npc.kind {
+        NpcKind::Friendly => {
+            if npc.follow_player {
+                Some(cam_pos)
+            } else {
+                None
+            }
+        }
+        NpcKind::Hostile => {
+            if npc.last_seen_timer > 0.05 {
+                Some(npc.last_seen_player)
+            } else if npc.investigate_timer > 0.05 {
+                Some(npc.investigate_target)
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(target_pos) = target {
+        let marker = target_pos + Vec3::new(0.0, 0.6, 0.0);
+        gizmos.line(eye, marker, Color::srgb(0.24, 0.62, 1.0));
+        gizmos.cuboid(
+            Transform::from_translation(marker).with_scale(Vec3::splat(0.35)),
+            Color::srgba(0.24, 0.62, 1.0, 0.85),
+        );
+    }
+
+    if npc.kind == NpcKind::Hostile {
+        let sees = can_see_target(
+            npc_pos,
+            npc.heading,
+            cam_pos,
+            HOSTILE_VISION_RANGE,
+            HOSTILE_VISION_DOT,
+            &world.chunks,
+        );
+        let los_color = if sees {
+            Color::srgb(0.95, 0.10, 0.10)
+        } else if line_of_sight_clear(eye, cam_pos + Vec3::new(0.0, 1.3, 0.0), &world.chunks) {
+            Color::srgb(0.94, 0.84, 0.18)
+        } else {
+            Color::srgb(0.45, 0.45, 0.45)
+        };
+        gizmos.line(eye, cam_pos + Vec3::new(0.0, 1.3, 0.0), los_color);
     }
 }
 
@@ -627,32 +836,115 @@ fn collides_npc(chunks: &HashMap<IVec2, Chunk>, feet: Vec3) -> bool {
 }
 
 fn try_step_up_npc(current: Vec3, horizontal_delta: Vec3, chunks: &HashMap<IVec2, Chunk>) -> Option<Vec3> {
-    let raised = current + Vec3::Y * NPC_STEP_HEIGHT;
-    if collides_npc(chunks, raised) {
-        return None;
-    }
-
-    let moved = raised + horizontal_delta;
-    if collides_npc(chunks, moved) {
-        return None;
-    }
-    if enters_water(chunks, moved.x.floor() as i32, moved.z.floor() as i32) {
-        return None;
-    }
-
-    let mut snapped = moved;
-    let drop_step = 0.10;
-    let mut dropped = 0.0;
-    while dropped < NPC_STEP_HEIGHT + 0.15 {
-        let next = snapped - Vec3::Y * drop_step;
-        if collides_npc(chunks, next) {
-            break;
+    for step_h in [NPC_STEP_HEIGHT, NPC_STEP_HEIGHT + 0.38] {
+        let raised = current + Vec3::Y * step_h;
+        if collides_npc(chunks, raised) {
+            continue;
         }
-        snapped = next;
-        dropped += drop_step;
-    }
 
-    Some(snapped)
+        let moved = raised + horizontal_delta;
+        if collides_npc(chunks, moved) {
+            continue;
+        }
+        if enters_water(chunks, moved.x.floor() as i32, moved.z.floor() as i32) {
+            continue;
+        }
+
+        let mut snapped = moved;
+        let drop_step = 0.10;
+        let mut dropped = 0.0;
+        while dropped < step_h + 0.20 {
+            let next = snapped - Vec3::Y * drop_step;
+            if collides_npc(chunks, next) {
+                break;
+            }
+            snapped = next;
+            dropped += drop_step;
+        }
+        return Some(snapped);
+    }
+    None
+}
+
+fn choose_walk_heading(
+    current_heading: f32,
+    desired_heading: f32,
+    pos: Vec3,
+    speed: f32,
+    dt: f32,
+    chunks: &HashMap<IVec2, Chunk>,
+) -> f32 {
+    let probe_dist = (speed * dt * 2.0 + 0.95).clamp(0.9, 1.8);
+    let mut best = desired_heading;
+    let mut best_score = f32::INFINITY;
+
+    for off in [0.0, 0.28, -0.28, 0.55, -0.55, 0.95, -0.95, 1.35, -1.35] {
+        let h = desired_heading + off;
+        let dir = Vec2::new(h.cos(), h.sin());
+        let probe = pos + Vec3::new(dir.x * probe_dist, 0.0, dir.y * probe_dist);
+        let mut score = wrap_angle(h - desired_heading).abs() * 1.8 + wrap_angle(h - current_heading).abs() * 0.45;
+        if enters_water(chunks, probe.x.floor() as i32, probe.z.floor() as i32) {
+            score += 7.0;
+        }
+        if collides_npc(chunks, probe) && try_step_up_npc(pos, probe - pos, chunks).is_none() {
+            score += 8.0;
+        }
+        if !has_support(
+            chunks,
+            probe.x.floor() as i32,
+            probe.z.floor() as i32,
+            (probe.y - 0.2).floor() as i32,
+        ) {
+            score += 5.0;
+        }
+        if score < best_score {
+            best_score = score;
+            best = h;
+        }
+    }
+    best
+}
+
+fn can_see_target(
+    npc_pos: Vec3,
+    heading: f32,
+    target_pos: Vec3,
+    max_dist: f32,
+    fov_dot: f32,
+    chunks: &HashMap<IVec2, Chunk>,
+) -> bool {
+    let eye = npc_pos + Vec3::new(0.0, 1.45, 0.0);
+    let target = target_pos + Vec3::new(0.0, 1.45, 0.0);
+    let delta = target - eye;
+    let dist = delta.length();
+    if dist > max_dist || dist < 0.001 {
+        return false;
+    }
+    let forward = Vec3::new(heading.cos(), 0.0, heading.sin()).normalize_or_zero();
+    let facing = forward.dot(delta.normalize_or_zero());
+    if facing < fov_dot {
+        return false;
+    }
+    line_of_sight_clear(eye, target, chunks)
+}
+
+fn line_of_sight_clear(from: Vec3, to: Vec3, chunks: &HashMap<IVec2, Chunk>) -> bool {
+    let delta = to - from;
+    let dist = delta.length();
+    if dist <= 0.001 {
+        return true;
+    }
+    let dir = delta / dist;
+    let mut t = 0.35;
+    while t < dist - 0.2 {
+        let p = from + dir * t;
+        let b = get_block_world(chunks, p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        if is_solid(b) {
+            return false;
+        }
+        t += 0.45;
+    }
+    true
 }
 
 #[inline]
