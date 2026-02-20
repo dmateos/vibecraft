@@ -1,9 +1,9 @@
 pub const CHUNK_SIZE: usize = 32;
 pub const WORLD_HEIGHT: usize = 192;
-pub const VIEW_DISTANCE_CHUNKS: i32 = 16;
+pub const VIEW_DISTANCE_CHUNKS: i32 = 20;
 pub const SEA_LEVEL: i32 = 48;
-pub const MAX_CHUNKS_GENERATED_PER_TICK: usize = 40;
-pub const MAX_CHUNKS_MESHED_PER_TICK: usize = 28;
+pub const MAX_CHUNKS_GENERATED_PER_TICK: usize = 120;
+pub const MAX_CHUNKS_MESHED_PER_TICK: usize = 96;
 
 pub const WALK_SPEED: f32 = 8.0;
 pub const SPRINT_MULTIPLIER: f32 = 1.8;
