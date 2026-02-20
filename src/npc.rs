@@ -41,7 +41,9 @@ pub enum NpcKind {
 #[derive(Component)]
 pub struct Npc {
     pub kind: NpcKind,
+    pub cell: IVec2,
     pub health: f32,
+    pub dead: bool,
     pub heading: f32,
     pub speed: f32,
     pub turn_timer: f32,
@@ -56,6 +58,8 @@ pub struct Npc {
     pub investigate_timer: f32,
     pub last_pos: Vec3,
     pub stuck_timer: f32,
+    pub knockback_velocity: Vec3,
+    pub hurt_stun: f32,
 }
 
 #[derive(Component)]
@@ -72,6 +76,25 @@ pub struct LoadedNpcs {
     entries: HashMap<IVec2, Entity>,
 }
 
+#[derive(Resource, Default)]
+pub struct DeadNpcCells {
+    killed: HashSet<IVec2>,
+}
+
+impl DeadNpcCells {
+    pub fn clear(&mut self) {
+        self.killed.clear();
+    }
+
+    pub fn mark_killed(&mut self, cell: IVec2) {
+        self.killed.insert(cell);
+    }
+
+    pub fn is_killed(&self, cell: IVec2) -> bool {
+        self.killed.contains(&cell)
+    }
+}
+
 impl LoadedNpcs {
     pub fn clear_and_despawn(&mut self, commands: &mut Commands) {
         let entities: Vec<Entity> = self.entries.values().copied().collect();
@@ -81,9 +104,6 @@ impl LoadedNpcs {
         }
     }
 
-    pub fn remove_entity(&mut self, entity: Entity) {
-        self.entries.retain(|_, e| *e != entity);
-    }
 }
 
 #[derive(Resource)]
@@ -191,6 +211,8 @@ pub fn stream_npcs_around_camera(
     time: Res<Time>,
     mut timer: ResMut<NpcStreamTimer>,
     mut loaded: ResMut<LoadedNpcs>,
+    dead_cells: Res<DeadNpcCells>,
+    npc_state_q: Query<&Npc>,
     world: Res<VoxelWorld>,
     assets: Res<NpcAssets>,
     cam_q: Query<&Transform, With<FlyCam>>,
@@ -245,9 +267,17 @@ pub fn stream_npcs_around_camera(
         );
         let out_of_range =
             chunk_distance_sq(cc, cam_chunk) > NPC_DESPAWN_RADIUS_CHUNKS * NPC_DESPAWN_RADIUS_CHUNKS;
-        if (out_of_range || !desired_cells.contains(&cell))
-            && let Some(entity) = loaded.entries.remove(&cell)
-        {
+        let should_remove = if out_of_range {
+            true
+        } else if !desired_cells.contains(&cell) {
+            match loaded.entries.get(&cell).and_then(|e| npc_state_q.get(*e).ok()) {
+                Some(npc) if npc.dead => false,
+                _ => true,
+            }
+        } else {
+            false
+        };
+        if should_remove && let Some(entity) = loaded.entries.remove(&cell) {
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -259,6 +289,7 @@ pub fn stream_npcs_around_camera(
     let mut to_spawn: Vec<IVec2> = desired_cells
         .into_iter()
         .filter(|cell| !loaded.entries.contains_key(cell))
+        .filter(|cell| !dead_cells.is_killed(*cell))
         .collect();
     to_spawn.sort_by_key(|cell| {
         let wx = cell.x * NPC_CELL_SIZE + NPC_CELL_SIZE / 2;
@@ -318,7 +349,9 @@ pub fn stream_npcs_around_camera(
                 },
                 Npc {
                     kind,
+                    cell,
                     health: if kind == NpcKind::Hostile { 72.0 } else { 48.0 },
+                    dead: false,
                     heading,
                     speed,
                     turn_timer: 0.8 + ((seed >> 10) as f32 / 255.0) * 2.2,
@@ -333,6 +366,8 @@ pub fn stream_npcs_around_camera(
                     investigate_timer: 0.0,
                     last_pos: Vec3::new(wx as f32 + 0.5, ground_y as f32, wz as f32 + 0.5),
                     stuck_timer: 0.0,
+                    knockback_velocity: Vec3::ZERO,
+                    hurt_stun: 0.0,
                 },
             ))
             .id();
@@ -623,6 +658,18 @@ pub fn tick_npcs(
         npc.chat_cooldown = (npc.chat_cooldown - dt).max(0.0);
         npc.last_seen_timer = (npc.last_seen_timer - dt).max(0.0);
         npc.investigate_timer = (npc.investigate_timer - dt).max(0.0);
+        npc.hurt_stun = (npc.hurt_stun - dt).max(0.0);
+
+        if npc.dead {
+            let kb = npc.knockback_velocity * dt;
+            let next = transform.translation + kb;
+            if !collides_npc(&world.chunks, next) {
+                transform.translation = next;
+            }
+            npc.knockback_velocity *= 0.82_f32.powf(dt * 60.0);
+            npc.knockback_velocity.y += NPC_GRAVITY * dt * 0.25;
+            continue;
+        }
 
         let to_player = player_pos - transform.translation;
         let player_dist = to_player.length();
@@ -724,6 +771,9 @@ pub fn tick_npcs(
 
         let dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
         let mut move_speed = if moving_intent { npc.speed } else { 0.0 };
+        if npc.hurt_stun > 0.0 {
+            move_speed *= 0.45;
+        }
         let turn_slow = (1.0 - (turn_mag / std::f32::consts::PI) * 0.55).clamp(0.45, 1.0);
         move_speed *= turn_slow;
         let ahead = transform.translation + Vec3::new(dir.x * 0.9, -0.05, dir.y * 0.9);
@@ -741,6 +791,13 @@ pub fn tick_npcs(
 
         let dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
         let mut pos = transform.translation;
+        if npc.knockback_velocity.length_squared() > 0.0001 {
+            let kb = npc.knockback_velocity * dt;
+            if !collides_npc(&world.chunks, pos + kb) {
+                pos += kb;
+            }
+            npc.knockback_velocity *= 0.80_f32.powf(dt * 60.0);
+        }
 
         let x_step = Vec3::new(dir.x * move_speed * dt, 0.0, 0.0);
         if !collides_npc(&world.chunks, pos + x_step)

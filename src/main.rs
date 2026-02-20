@@ -54,6 +54,7 @@ fn main() {
         .insert_resource(npc::NpcUiState::default())
         .insert_resource(npc::PlayerVitals::default())
         .insert_resource(npc::NpcStimulus::default())
+        .insert_resource(npc::DeadNpcCells::default())
         .insert_resource(water::LoadedWater::default())
         .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
             0.08,
@@ -220,6 +221,7 @@ fn regenerate_world_on_key(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
     mut loaded_npcs: ResMut<npc::LoadedNpcs>,
+    mut dead_npc_cells: ResMut<npc::DeadNpcCells>,
     mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
     grenade_q: Query<Entity, With<weapons::Grenade>>,
@@ -256,6 +258,7 @@ fn regenerate_world_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_npcs.clear_and_despawn(&mut commands);
+    dead_npc_cells.clear();
     for entity in &grenade_q {
         commands.entity(entity).despawn_recursive();
     }
@@ -285,6 +288,7 @@ fn toggle_terrain_mode_on_key(
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
     mut loaded_npcs: ResMut<npc::LoadedNpcs>,
+    mut dead_npc_cells: ResMut<npc::DeadNpcCells>,
     mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
     grenade_q: Query<Entity, With<weapons::Grenade>>,
@@ -313,6 +317,7 @@ fn toggle_terrain_mode_on_key(
 
     loaded_clouds.clear_and_despawn(&mut commands);
     loaded_npcs.clear_and_despawn(&mut commands);
+    dead_npc_cells.clear();
     for entity in &grenade_q {
         commands.entity(entity).despawn_recursive();
     }

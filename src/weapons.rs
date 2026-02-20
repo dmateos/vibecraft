@@ -3,10 +3,11 @@ use std::collections::{HashSet, VecDeque};
 use bevy::math::primitives::Cuboid;
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use bevy::ecs::query::QueryFilter;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
-use crate::npc::{LoadedNpcs, Npc};
+use crate::npc::{DeadNpcCells, LoadedNpcs, Npc};
 use crate::player::FlyCam;
 use crate::world::{
     div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
@@ -304,13 +305,14 @@ pub fn fire_gun_on_key(
 pub fn tick_bullets(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut Transform, &mut Bullet)>,
+    mut q: Query<(Entity, &mut Transform, &mut Bullet), Without<Npc>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
-    mut loaded_npcs: ResMut<LoadedNpcs>,
+    _loaded_npcs: ResMut<LoadedNpcs>,
+    mut dead_cells: ResMut<DeadNpcCells>,
     mut npc_q: ParamSet<(
-        Query<(Entity, &Transform, &Npc)>,
-        Query<&mut Npc>,
+        Query<(Entity, &Transform, &Npc), Without<Bullet>>,
+        Query<(&mut Npc, &mut Transform), Without<Bullet>>,
     )>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -333,11 +335,29 @@ pub fn tick_bullets(
 
         if npc_dist < block_dist {
             if let Some((npc_entity, _)) = npc_hit {
-                if let Ok(mut npc) = npc_q.p1().get_mut(npc_entity) {
+                if let Ok((mut npc, mut npc_transform)) = npc_q.p1().get_mut(npc_entity) {
+                    let bullet_dir = bullet.velocity.normalize_or_zero();
+                    npc.knockback_velocity += bullet_dir * 6.8 + Vec3::Y * 1.8;
+                    npc.hurt_stun = npc.hurt_stun.max(0.22);
+                    npc_transform.translation += bullet_dir * 0.20 + Vec3::Y * 0.04;
                     npc.health -= GUN_DAMAGE;
-                    if npc.health <= 0.0 {
-                        commands.entity(npc_entity).despawn_recursive();
-                        loaded_npcs.remove_entity(npc_entity);
+                    if npc.health <= 0.0 && !npc.dead {
+                        dead_cells.mark_killed(npc.cell);
+                        npc.dead = true;
+                        npc.health = 0.0;
+                        npc.follow_player = false;
+                        npc.attack_cooldown = 9999.0;
+                        npc.chat_cooldown = 9999.0;
+                        npc.knockback_velocity += bullet_dir * 4.4 + Vec3::Y * 1.2;
+                        npc_transform.translation += bullet_dir * 0.46;
+                        npc_transform.translation.y += 0.10;
+                        let yaw = -npc.heading + std::f32::consts::FRAC_PI_2;
+                        npc_transform.rotation = Quat::from_euler(
+                            EulerRot::XYZ,
+                            0.0,
+                            yaw,
+                            1.20,
+                        );
                     }
                 }
                 commands.entity(entity).despawn_recursive();
@@ -624,7 +644,11 @@ fn raycast_block(
     None
 }
 
-fn raycast_npc(start: Vec3, end: Vec3, npcs: &Query<(Entity, &Transform, &Npc)>) -> Option<(Entity, f32)> {
+fn raycast_npc<F: QueryFilter>(
+    start: Vec3,
+    end: Vec3,
+    npcs: &Query<(Entity, &Transform, &Npc), F>,
+) -> Option<(Entity, f32)> {
     let mut best: Option<(Entity, f32)> = None;
     let seg = end - start;
     let seg_len_sq = seg.length_squared().max(0.0001);
