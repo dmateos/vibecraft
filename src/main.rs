@@ -3,6 +3,7 @@ mod config;
 mod generation;
 mod interact;
 mod materials;
+mod npc;
 mod player;
 mod streaming;
 mod ui;
@@ -43,6 +44,13 @@ fn main() {
             0.12,
             TimerMode::Repeating,
         )))
+        .insert_resource(npc::LoadedNpcs::default())
+        .insert_resource(npc::NpcStreamTimer(Timer::from_seconds(
+            0.25,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(npc::NpcUiState::default())
+        .insert_resource(npc::PlayerVitals::default())
         .insert_resource(water::LoadedWater::default())
         .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
             0.08,
@@ -74,6 +82,7 @@ fn main() {
             (
                 setup,
                 clouds::setup_clouds,
+                npc::setup_npcs,
                 water::setup_water,
                 generation::initialize_prompt_input,
                 ui::spawn_crosshair,
@@ -89,6 +98,9 @@ fn main() {
                 interact::break_targeted_block,
                 interact::place_targeted_block,
                 streaming::stream_chunks_around_camera,
+                npc::stream_npcs_around_camera,
+                npc::npc_interactions,
+                npc::tick_npcs,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
                 clouds::animate_clouds,
@@ -191,6 +203,8 @@ fn regenerate_world_on_key(
     mut world: ResMut<VoxelWorld>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
+    mut loaded_npcs: ResMut<npc::LoadedNpcs>,
+    mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
@@ -221,6 +235,8 @@ fn regenerate_world_on_key(
     }
 
     loaded_clouds.clear_and_despawn(&mut commands);
+    loaded_npcs.clear_and_despawn(&mut commands);
+    vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 
     if let Ok(mut cam) = cam_q.get_single_mut() {
@@ -238,6 +254,8 @@ fn toggle_terrain_mode_on_key(
     mut world: ResMut<VoxelWorld>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     mut loaded_clouds: ResMut<clouds::LoadedClouds>,
+    mut loaded_npcs: ResMut<npc::LoadedNpcs>,
+    mut vitals: ResMut<npc::PlayerVitals>,
     mut loaded_water: ResMut<water::LoadedWater>,
     prompt: Res<generation::PromptInputState>,
     mut cam_q: Query<&mut Transform, With<FlyCam>>,
@@ -260,6 +278,8 @@ fn toggle_terrain_mode_on_key(
     }
 
     loaded_clouds.clear_and_despawn(&mut commands);
+    loaded_npcs.clear_and_despawn(&mut commands);
+    vitals.health = vitals.max_health;
     loaded_water.clear_and_despawn(&mut commands);
 
     if let Ok(mut cam) = cam_q.get_single_mut() {
