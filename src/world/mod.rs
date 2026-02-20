@@ -175,6 +175,8 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
     stamp_trees(&mut chunk, &noise);
     stamp_biome_features(&mut chunk, &noise);
     stamp_villages(&mut chunk, &noise);
+    stamp_grand_monument(&mut chunk, &noise);
+    stamp_megacity(&mut chunk, &noise);
     chunk
 }
 
@@ -1022,6 +1024,380 @@ fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) 
         let hd = 4 + ((seed >> (i + 7)) & 1) as i32;
         let hh = 4 + ((seed >> (i + 11)) & 1) as i32;
         place_house(chunk, cx + spot.x, ground_y + 1, cz + spot.y, hw, hd, hh, seed ^ i as u32);
+    }
+}
+
+fn stamp_grand_monument(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = monument_center(noise.seed);
+    let cx = center.x;
+    let cz = center.y;
+    let half_w = 36;
+    let half_d = 30;
+    let influence = 58;
+
+    let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
+    let chunk_min_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let chunk_max_z = chunk_min_z + CHUNK_SIZE as i32 - 1;
+    if cx + influence < chunk_min_x
+        || cx - influence > chunk_max_x
+        || cz + influence < chunk_min_z
+        || cz - influence > chunk_max_z
+    {
+        return;
+    }
+
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 7, WORLD_HEIGHT as i32 - 48);
+    flatten_village_ground(chunk, cx, base_y, cz, influence);
+
+    // Raised stone plinth.
+    for z in -half_d - 3..=half_d + 3 {
+        for x in -half_w - 3..=half_w + 3 {
+            let wx = cx + x;
+            let wz = cz + z;
+            if x * x + z * z > (influence + 6) * (influence + 6) {
+                continue;
+            }
+            set_if_inside(chunk, wx, base_y - 1, wz, Block::Stone);
+            set_if_inside(chunk, wx, base_y, wz, Block::Stone);
+        }
+    }
+
+    // Courtyard fill.
+    for z in -half_d + 2..=half_d - 2 {
+        for x in -half_w + 2..=half_w - 2 {
+            set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+        }
+    }
+
+    // Massive outer wall.
+    let wall_h = 17;
+    for y in base_y + 2..=base_y + wall_h {
+        for x in -half_w..=half_w {
+            for t in 0..=1 {
+                set_if_inside(chunk, cx + x, y, cz - half_d + t, Block::Stone);
+                set_if_inside(chunk, cx + x, y, cz + half_d - t, Block::Stone);
+            }
+        }
+        for z in -half_d..=half_d {
+            for t in 0..=1 {
+                set_if_inside(chunk, cx - half_w + t, y, cz + z, Block::Stone);
+                set_if_inside(chunk, cx + half_w - t, y, cz + z, Block::Stone);
+            }
+        }
+    }
+
+    // Battlements.
+    for x in (-half_w..=half_w).step_by(2) {
+        set_if_inside(chunk, cx + x, base_y + wall_h + 1, cz - half_d, Block::Snow);
+        set_if_inside(chunk, cx + x, base_y + wall_h + 1, cz + half_d, Block::Snow);
+    }
+    for z in (-half_d..=half_d).step_by(2) {
+        set_if_inside(chunk, cx - half_w, base_y + wall_h + 1, cz + z, Block::Snow);
+        set_if_inside(chunk, cx + half_w, base_y + wall_h + 1, cz + z, Block::Snow);
+    }
+
+    // Gate and bridge.
+    for y in base_y + 2..=base_y + 9 {
+        for x in -4..=4 {
+            set_if_inside(chunk, cx + x, y, cz - half_d, Block::Air);
+            set_if_inside(chunk, cx + x, y, cz - half_d + 1, Block::Air);
+        }
+    }
+    for z in -half_d - 12..=-half_d + 3 {
+        for x in -5..=5 {
+            set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+        }
+    }
+
+    // Corner towers.
+    for (tx, tz) in [
+        (cx - half_w + 2, cz - half_d + 2),
+        (cx + half_w - 2, cz - half_d + 2),
+        (cx - half_w + 2, cz + half_d - 2),
+        (cx + half_w - 2, cz + half_d - 2),
+    ] {
+        place_round_tower(chunk, tx, base_y + 1, tz, 5, 28);
+    }
+
+    // Cathedral body.
+    let nave_hw = 12;
+    let nave_hd = 21;
+    let nave_h = 21;
+    for y in base_y + 2..=base_y + nave_h {
+        for z in -nave_hd..=nave_hd {
+            for x in -nave_hw..=nave_hw {
+                let wx = cx + x;
+                let wz = cz + z;
+                let border = x.abs() >= nave_hw - 1 || z.abs() >= nave_hd - 1;
+                if border {
+                    let mat = if y % 4 == 0 { Block::Snow } else { Block::Stone };
+                    set_if_inside(chunk, wx, y, wz, mat);
+                } else {
+                    set_if_inside(chunk, wx, y, wz, Block::Air);
+                }
+            }
+        }
+    }
+
+    // Aisles.
+    for side in [-1, 1] {
+        let ax0 = side * (nave_hw + 1);
+        let ax1 = side * (nave_hw + 7);
+        for y in base_y + 2..=base_y + 12 {
+            for z in -nave_hd + 2..=nave_hd - 2 {
+                for x in ax0.min(ax1)..=ax0.max(ax1) {
+                    let border = x == ax0 || x == ax1 || z.abs() == nave_hd - 2;
+                    let wx = cx + x;
+                    let wz = cz + z;
+                    if border {
+                        set_if_inside(chunk, wx, y, wz, Block::Stone);
+                    } else {
+                        set_if_inside(chunk, wx, y, wz, Block::Air);
+                    }
+                }
+            }
+        }
+    }
+
+    // Clerestory roofline.
+    for ry in 0..=7 {
+        let shrink = ry / 2;
+        for z in -(nave_hd + 1 - shrink)..=(nave_hd + 1 - shrink) {
+            for x in -(nave_hw + 1 - shrink)..=(nave_hw + 1 - shrink) {
+                set_if_inside(chunk, cx + x, base_y + nave_h + 1 + ry, cz + z, Block::Wood);
+            }
+        }
+    }
+
+    // Central spire.
+    place_round_tower(chunk, cx, base_y + 2, cz + 3, 4, 38);
+    for y in base_y + 40..=base_y + 45 {
+        let r = (base_y + 45 - y).max(1);
+        for z in -r..=r {
+            for x in -r..=r {
+                if x * x + z * z <= r * r {
+                    set_if_inside(chunk, cx + x, y, cz + 3 + z, Block::Snow);
+                }
+            }
+        }
+    }
+
+    // Stained window accents.
+    for y in (base_y + 6..=base_y + 18).step_by(4) {
+        for x in [-nave_hw + 1, nave_hw - 1] {
+            set_if_inside(chunk, cx + x, y, cz - 12, Block::Blue);
+            set_if_inside(chunk, cx + x, y, cz, Block::Purple);
+            set_if_inside(chunk, cx + x, y, cz + 12, Block::Cyan);
+        }
+        set_if_inside(chunk, cx, y, cz - nave_hd + 1, Block::Red);
+    }
+
+    // Keep marker on top so it's easy to spot from distance.
+    for y in base_y + 46..=base_y + 49 {
+        set_if_inside(chunk, cx, y, cz + 3, Block::Yellow);
+    }
+}
+
+fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = city_center(noise.seed);
+    let cx = center.x;
+    let cz = center.y;
+    let influence = 92;
+
+    let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
+    let chunk_min_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let chunk_max_z = chunk_min_z + CHUNK_SIZE as i32 - 1;
+    if cx + influence < chunk_min_x
+        || cx - influence > chunk_max_x
+        || cz + influence < chunk_min_z
+        || cz - influence > chunk_max_z
+    {
+        return;
+    }
+
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 7, WORLD_HEIGHT as i32 - 70);
+    flatten_village_ground(chunk, cx, base_y, cz, influence);
+
+    // Dense road grid.
+    for z in -66..=66 {
+        for x in -66..=66 {
+            if x % 12 == 0 || z % 12 == 0 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
+            } else if (x + z) % 17 == 0 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+            }
+        }
+    }
+
+    // Ring avenue.
+    for z in -72..=72 {
+        for x in -72..=72 {
+            let d2 = x * x + z * z;
+            if d2 >= 66 * 66 && d2 <= 72 * 72 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+            }
+        }
+    }
+
+    // Building lots.
+    for gz in -5..=5 {
+        for gx in -5..=5 {
+            if gx == 0 && gz == 0 {
+                continue;
+            }
+            let lot_hash = hash3(gx, gz, noise.seed ^ 0xBB10_6237);
+            if lot_hash & 7 == 0 {
+                continue;
+            }
+            let lot_cx = cx + gx * 12 + (((lot_hash >> 3) & 1) as i32 - ((lot_hash >> 4) & 1) as i32);
+            let lot_cz = cz + gz * 12 + (((lot_hash >> 5) & 1) as i32 - ((lot_hash >> 6) & 1) as i32);
+            let hw = 3 + ((lot_hash >> 8) & 0x3) as i32;
+            let hd = 3 + ((lot_hash >> 10) & 0x3) as i32;
+
+            let radial = ((gx * gx + gz * gz) as f32).sqrt();
+            let core_boost = (7.0 - radial).max(0.0) * 5.0;
+            let h = 14 + ((lot_hash >> 14) & 0x1F) as i32 + core_boost as i32;
+            let height = h.clamp(12, 58);
+
+            place_skyscraper(chunk, lot_cx, base_y + 2, lot_cz, hw, hd, height, lot_hash);
+        }
+    }
+
+    // Signature supertalls.
+    for (i, (tx, tz)) in [(cx + 10, cz - 8), (cx - 15, cz + 9), (cx + 2, cz + 18)].into_iter().enumerate() {
+        place_skyscraper(
+            chunk,
+            tx,
+            base_y + 2,
+            tz,
+            5 - (i as i32 % 2),
+            5,
+            62 - (i as i32 * 4),
+            hash3(tx, tz, noise.seed ^ 0xD4A1_9943),
+        );
+    }
+
+    // Spawn marker for easy spotting from distance.
+    for y in base_y + 3..=base_y + 8 {
+        set_if_inside(chunk, cx, y, cz, Block::Yellow);
+    }
+}
+
+#[inline]
+fn monument_center(seed: u32) -> IVec2 {
+    let radius = 104.0 + ((seed >> 5) & 63) as f32;
+    let angle = ((seed.rotate_left(9) as f32) / (u32::MAX as f32)) * std::f32::consts::TAU;
+    IVec2::new((angle.cos() * radius).round() as i32, (angle.sin() * radius).round() as i32)
+}
+
+#[inline]
+fn city_center(seed: u32) -> IVec2 {
+    let monument = monument_center(seed);
+    let m = Vec2::new(monument.x as f32, monument.y as f32);
+    let mdir = if m.length_squared() > 1.0 {
+        m.normalize()
+    } else {
+        Vec2::new(1.0, 0.0)
+    };
+    let side = if (seed & 1) == 0 { 1.0 } else { -1.0 };
+    let perp = Vec2::new(-mdir.y, mdir.x) * side;
+    let outward = mdir * (34.0 + ((seed >> 11) & 31) as f32);
+    let lateral = perp * (152.0 + ((seed >> 7) & 31) as f32);
+    let c = m + outward + lateral;
+    IVec2::new(c.x.round() as i32, c.y.round() as i32)
+}
+
+fn place_round_tower(chunk: &mut Chunk, cx: i32, base_y: i32, cz: i32, radius: i32, height: i32) {
+    for y in base_y..=base_y + height {
+        for z in -radius..=radius {
+            for x in -radius..=radius {
+                let d2 = x * x + z * z;
+                if d2 > radius * radius {
+                    continue;
+                }
+                let wx = cx + x;
+                let wz = cz + z;
+                let shell = d2 >= (radius - 1) * (radius - 1);
+                if shell {
+                    set_if_inside(chunk, wx, y, wz, Block::Stone);
+                } else {
+                    set_if_inside(chunk, wx, y, wz, Block::Air);
+                }
+            }
+        }
+    }
+
+    let cap_y = base_y + height + 1;
+    for y in cap_y..=cap_y + 4 {
+        let r = (cap_y + 4 - y).max(1);
+        for z in -r..=r {
+            for x in -r..=r {
+                if x * x + z * z <= r * r {
+                    set_if_inside(chunk, cx + x, y, cz + z, Block::Wood);
+                }
+            }
+        }
+    }
+}
+
+fn place_skyscraper(
+    chunk: &mut Chunk,
+    cx: i32,
+    base_y: i32,
+    cz: i32,
+    hw: i32,
+    hd: i32,
+    height: i32,
+    seed: u32,
+) {
+    let shell = if (seed & 1) == 0 { Block::Stone } else { Block::Blue };
+    let accent = match (seed >> 2) & 3 {
+        0 => Block::Cyan,
+        1 => Block::Purple,
+        2 => Block::Blue,
+        _ => Block::Stone,
+    };
+    let roof = if (seed & 8) == 0 { Block::Stone } else { Block::Wood };
+
+    for z in -hd - 1..=hd + 1 {
+        for x in -hw - 1..=hw + 1 {
+            set_if_inside(chunk, cx + x, base_y - 1, cz + z, Block::Stone);
+        }
+    }
+
+    for y in base_y..=base_y + height {
+        for z in -hd..=hd {
+            for x in -hw..=hw {
+                let wx = cx + x;
+                let wz = cz + z;
+                let border = x.abs() == hw || z.abs() == hd;
+                if border {
+                    let mut b = shell;
+                    if y % 5 == 0 {
+                        b = accent;
+                    }
+                    // Window bands.
+                    if y % 4 == 2 && (x.abs() == hw || z.abs() == hd) {
+                        b = Block::Cyan;
+                    }
+                    set_if_inside(chunk, wx, y, wz, b);
+                } else {
+                    set_if_inside(chunk, wx, y, wz, Block::Air);
+                }
+            }
+        }
+    }
+
+    // Roof cap + antenna.
+    for z in -hd..=hd {
+        for x in -hw..=hw {
+            set_if_inside(chunk, cx + x, base_y + height + 1, cz + z, roof);
+        }
+    }
+    for y in base_y + height + 2..=base_y + height + 6 {
+        set_if_inside(chunk, cx, y, cz, Block::Yellow);
     }
 }
 
