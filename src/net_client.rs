@@ -1,8 +1,6 @@
 //! In-game network client integration for snapshots and remote entities.
 //! Handles UDP session state, local input upload, remote state interpolation,
 //! and applying authoritative server block edits into the rendered world.
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
@@ -11,14 +9,15 @@ use std::time::{Duration, Instant};
 use bevy::math::primitives::Cuboid;
 use bevy::prelude::*;
 
-use crate::interact::LocalBlockEditEvent;
+use crate::block_edit::{BlockMutationRequest, LocalBlockEditEvent};
 use crate::interact::PlacementPalette;
 use crate::player::FlyCam;
 use crate::world::Block;
-use crate::world::{div_floor, get_block_world, remesh_affected_chunks, set_block_world, LoadedChunks, VoxelWorld};
+use crate::world::{VoxelWorld, get_block_world};
 use vibecraft::net::protocol::{
-    AckSnapshotMsg, BlockCell, BlockEditsMsg, BlockIdNet, ClientId, ClientMsg, HelloMsg, InputFrameMsg, NetEvent,
-    NpcKindNet, NpcStateNet, PROTOCOL_VERSION, PlayerStateNet, ServerMsg, SnapshotSeq,
+    AckSnapshotMsg, BlockCell, BlockEditsMsg, BlockIdNet, ClientId, ClientMsg, HelloMsg,
+    InputFrameMsg, NetEvent, NpcKindNet, NpcStateNet, PROTOCOL_VERSION, PlayerStateNet, ServerMsg,
+    SnapshotSeq,
 };
 
 const NET_MAX_RECV_PER_FRAME: usize = 64;
@@ -129,6 +128,14 @@ impl NetClientState {
     }
 }
 
+#[inline]
+pub fn is_remote_simulation(net: Option<&NetClientState>) -> bool {
+    match net {
+        Some(net) => net.cfg.enabled && net.connected && !net.is_authority(),
+        None => false,
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct NetEntityMap {
     players: HashMap<ClientId, Entity>,
@@ -171,8 +178,15 @@ pub struct NetFx {
 
 #[derive(Clone, Copy, Debug)]
 pub enum NetFxSpawn {
-    Gun { source_client: ClientId, from: Vec3, dir: Vec3 },
-    Explosion { at: Vec3, radius: f32 },
+    Gun {
+        source_client: ClientId,
+        from: Vec3,
+        dir: Vec3,
+    },
+    Explosion {
+        at: Vec3,
+        radius: f32,
+    },
 }
 
 pub fn setup_net_client(mut state: ResMut<NetClientState>) {
@@ -198,7 +212,10 @@ pub fn setup_net_client(mut state: ResMut<NetClientState>) {
         warn!("net client set_nonblocking failed: {e}");
         return;
     }
-    info!("net client local={} server={server}", sock.local_addr().unwrap_or(server));
+    info!(
+        "net client local={} server={server}",
+        sock.local_addr().unwrap_or(server)
+    );
     state.socket = Some(sock);
 }
 
@@ -302,7 +319,11 @@ pub fn tick_net_client(
             .len()
             .min(NET_BLOCK_EDITS_PER_PACKET);
         let edits = state.outgoing_block_edits.drain(..take).collect();
-        send(&sock, server, &ClientMsg::BlockEdits(BlockEditsMsg { edits }));
+        send(
+            &sock,
+            server,
+            &ClientMsg::BlockEdits(BlockEditsMsg { edits }),
+        );
         packets_sent += 1;
     }
 
@@ -310,7 +331,12 @@ pub fn tick_net_client(
     if keys.just_pressed(KeyCode::KeyE) {
         state.latched_fire = true;
         if let Ok(cam) = cam_q.get_single()
-            && let Some((solid, _)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH * 2.3)
+            && let Some((solid, _)) = raycast_target(
+                cam.translation,
+                *cam.forward(),
+                &world.chunks,
+                crate::config::BREAK_REACH * 2.3,
+            )
         {
             state.latched_fire_cell = Some([solid.x, solid.y, solid.z]);
         }
@@ -319,7 +345,12 @@ pub fn tick_net_client(
     if buttons.just_pressed(MouseButton::Left) {
         state.latched_break = true;
         if let Ok(cam) = cam_q.get_single()
-            && let Some((solid, _)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH)
+            && let Some((solid, _)) = raycast_target(
+                cam.translation,
+                *cam.forward(),
+                &world.chunks,
+                crate::config::BREAK_REACH,
+            )
         {
             state.latched_break_cell = Some([solid.x, solid.y, solid.z]);
         }
@@ -328,7 +359,12 @@ pub fn tick_net_client(
         state.latched_place = true;
         state.latched_place_block = Some(block_to_net(palette.selected_block()));
         if let Ok(cam) = cam_q.get_single()
-            && let Some((_solid, prev)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH)
+            && let Some((_solid, prev)) = raycast_target(
+                cam.translation,
+                *cam.forward(),
+                &world.chunks,
+                crate::config::BREAK_REACH,
+            )
         {
             state.latched_place_cell = Some([prev.x, prev.y, prev.z]);
         }
@@ -427,8 +463,10 @@ pub fn tick_net_client(
     if state.last_input_send.elapsed() >= Duration::from_millis(NET_INPUT_SEND_MS)
         && let Ok(cam) = cam_q.get_single()
     {
-        let move_x = (keys.pressed(KeyCode::KeyD) as i32 - keys.pressed(KeyCode::KeyA) as i32) as f32;
-        let move_z = (keys.pressed(KeyCode::KeyW) as i32 - keys.pressed(KeyCode::KeyS) as i32) as f32;
+        let move_x =
+            (keys.pressed(KeyCode::KeyD) as i32 - keys.pressed(KeyCode::KeyA) as i32) as f32;
+        let move_z =
+            (keys.pressed(KeyCode::KeyW) as i32 - keys.pressed(KeyCode::KeyS) as i32) as f32;
         let view_dir = *cam.forward();
         let input = ClientMsg::InputFrame(InputFrameMsg {
             input_seq: state.input_seq,
@@ -468,9 +506,7 @@ pub fn tick_net_client(
 
 pub fn apply_remote_block_edits(
     mut state: ResMut<NetClientState>,
-    mut world: ResMut<VoxelWorld>,
-    loaded: Res<LoadedChunks>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut mutation_requests: EventWriter<BlockMutationRequest>,
 ) {
     if !state.cfg.enabled || state.pending_block_edits.is_empty() {
         return;
@@ -478,27 +514,14 @@ pub fn apply_remote_block_edits(
     let mut edits = std::mem::take(&mut state.pending_block_edits);
     let overflow = edits.split_off(edits.len().min(NET_MAX_BLOCK_EDITS_PER_FRAME));
     state.pending_block_edits = overflow;
-    let mut touched_chunks = HashSet::new();
     for e in edits {
-        if get_block_world(&world.chunks, e.x, e.y, e.z) == block_from_net(e.block) {
-            continue;
-        }
-        if set_block_world(
-            &mut world.chunks,
-            e.x,
-            e.y,
-            e.z,
-            block_from_net(e.block),
-        ) {
-            let chunk = IVec2::new(
-                div_floor(e.x, crate::config::CHUNK_SIZE as i32),
-                div_floor(e.z, crate::config::CHUNK_SIZE as i32),
-            );
-            touched_chunks.insert(chunk);
-        }
-    }
-    for chunk in touched_chunks {
-        remesh_affected_chunks(chunk, &world.chunks, &loaded, &mut meshes);
+        mutation_requests.send(BlockMutationRequest {
+            x: e.x,
+            y: e.y,
+            z: e.z,
+            block: block_from_net(e.block),
+            emit_local_event: false,
+        });
     }
 }
 
@@ -677,29 +700,36 @@ pub fn sync_remote_entities(
                 NpcKindNet::Friendly => assets.npc_friendly_mat.clone(),
                 NpcKindNet::Hostile => assets.npc_hostile_mat.clone(),
             };
-            let mut transform = Transform::from_translation(Vec3::new(n.pos[0], n.pos[1], n.pos[2]));
+            let mut transform =
+                Transform::from_translation(Vec3::new(n.pos[0], n.pos[1], n.pos[2]));
             if n.dead {
                 transform.rotation = Quat::from_rotation_z(1.15);
             }
             let root = commands
-                .spawn((SpatialBundle { transform, ..default() }, RemoteNpc { net_id: n.entity_id }))
+                .spawn((
+                    SpatialBundle {
+                        transform,
+                        ..default()
+                    },
+                    RemoteNpc {
+                        net_id: n.entity_id,
+                    },
+                ))
                 .id();
             let body = commands
-                .spawn((
-                    PbrBundle {
-                        mesh: assets.mesh.clone(),
-                        material: mat.clone(),
-                        transform: Transform {
-                            translation: Vec3::new(0.0, 0.92, 0.0),
-                            scale: match n.kind {
-                                NpcKindNet::Friendly => Vec3::new(0.58, 0.86, 0.34),
-                                NpcKindNet::Hostile => Vec3::new(0.84, 0.52, 1.02),
-                            },
-                            ..default()
+                .spawn((PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: mat.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 0.92, 0.0),
+                        scale: match n.kind {
+                            NpcKindNet::Friendly => Vec3::new(0.58, 0.86, 0.34),
+                            NpcKindNet::Hostile => Vec3::new(0.84, 0.52, 1.02),
                         },
                         ..default()
                     },
-                ))
+                    ..default()
+                },))
                 .id();
             let head = commands
                 .spawn(PbrBundle {
@@ -720,14 +750,8 @@ pub fn sync_remote_entities(
                 })
                 .id();
             commands.entity(root).add_child(body).add_child(head);
-            map.npcs.insert(
-                n.entity_id,
-                RemoteNpcBundle {
-                    root,
-                    body,
-                    head,
-                },
-            );
+            map.npcs
+                .insert(n.entity_id, RemoteNpcBundle { root, body, head });
         }
     }
     let stale_npcs: Vec<u64> = map

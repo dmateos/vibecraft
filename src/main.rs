@@ -1,6 +1,7 @@
 //! Main Bevy client entry point and full system schedule wiring.
 //! Inserts global resources, configures rendering/material plugins, and
 //! composes gameplay systems in ordered update sets for local play.
+mod block_edit;
 mod clouds;
 mod config;
 mod generation;
@@ -8,6 +9,8 @@ mod interact;
 mod materials;
 mod net_client;
 mod npc;
+mod perception;
+mod physics;
 mod player;
 mod sky;
 mod streaming;
@@ -33,55 +36,8 @@ use world::{LoadedChunks, StreamTimer, TerrainMode, VoxelWorld};
 fn main() {
     let net_cfg = net_client::NetClientConfig::from_args();
     let mut app = App::new();
-    app.insert_resource(Msaa::Off)
-        .insert_resource(ClearColor(Color::srgb(0.40, 0.72, 0.96)))
-        .insert_resource(AmbientLight {
-            color: Color::WHITE,
-            brightness: 180.0,
-        })
-        .insert_resource(VoxelWorld {
-            seed: 1337,
-            chunks: HashMap::new(),
-        })
-        .insert_resource(TerrainMode::Procedural)
-        .insert_resource(LoadedChunks::default())
-        .insert_resource(StreamTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
-        .insert_resource(clouds::LoadedClouds::default())
-        .insert_resource(clouds::CloudStreamTimer(Timer::from_seconds(
-            0.12,
-            TimerMode::Repeating,
-        )))
-        .insert_resource(npc::LoadedNpcs::default())
-        .insert_resource(npc::NpcStreamTimer(Timer::from_seconds(
-            0.25,
-            TimerMode::Repeating,
-        )))
-        .insert_resource(npc::NpcUiState::default())
-        .insert_resource(npc::PlayerVitals::default())
-        .insert_resource(npc::NpcStimulus::default())
-        .insert_resource(npc::DeadNpcCells::default())
-        .insert_resource(water::LoadedWater::default())
-        .insert_resource(water::WaterPhysicsConfig::default())
-        .insert_resource(water::WaterFlowSim::default())
-        .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
-            0.08,
-            TimerMode::Repeating,
-        )))
-        .insert_resource(generation::GenerationConfig::default())
-        .insert_resource(generation::GenerationQueue::default())
-        .insert_resource(generation::GenerationRuntimeStats::default())
-        .insert_resource(generation::LiveLlmState::default())
-        .insert_resource(generation::PromptInputState::default())
-        .insert_resource(weather::DayNightState::default())
-        .insert_resource(weather::WeatherState::default())
-        .insert_resource(streaming::StreamingRuntimeStats::default())
-        .insert_resource(interact::PlacementPalette::default())
-        .insert_resource(interact::BlockInventory::default())
-        .insert_resource(ui::GameUiFlow::default())
-        .insert_resource(ui::DebugOverlayState::default())
-        .insert_resource(ui::FrameStats::default())
-        .add_event::<interact::LocalBlockEditEvent>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+    configure_startup_resources(&mut app);
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "VibeCraft".to_string(),
                 resolution: (1728.0, 972.0).into(),
@@ -138,10 +94,17 @@ fn main() {
                 weapons::throw_grenade_on_key,
                 weapons::tick_grenades,
                 weapons::process_explosion_jobs,
-                weapons::process_dirty_chunk_remeshes,
                 weapons::tick_weapon_vfx,
             )
                 .run_if(gameplay_phase_active),
+        )
+        .add_systems(
+            Update,
+            block_edit::apply_block_mutations
+                .after(interact::place_targeted_block)
+                .after(weapons::process_explosion_jobs)
+                .after(net_client::apply_remote_block_edits)
+                .run_if(world_phase_active),
         )
         .add_systems(
             Update,
@@ -225,6 +188,58 @@ fn world_phase_active(flow: Res<ui::GameUiFlow>) -> bool {
 
 fn gameplay_phase_active(flow: Res<ui::GameUiFlow>) -> bool {
     matches!(flow.phase, ui::GameUiPhase::Playing)
+}
+
+fn configure_startup_resources(app: &mut App) {
+    app.insert_resource(Msaa::Off)
+        .insert_resource(ClearColor(Color::srgb(0.40, 0.72, 0.96)))
+        .insert_resource(AmbientLight {
+            color: Color::WHITE,
+            brightness: 180.0,
+        })
+        .insert_resource(VoxelWorld {
+            seed: 1337,
+            chunks: HashMap::new(),
+        })
+        .insert_resource(TerrainMode::Procedural)
+        .insert_resource(LoadedChunks::default())
+        .insert_resource(StreamTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
+        .insert_resource(clouds::LoadedClouds::default())
+        .insert_resource(clouds::CloudStreamTimer(Timer::from_seconds(
+            0.12,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(npc::LoadedNpcs::default())
+        .insert_resource(npc::NpcStreamTimer(Timer::from_seconds(
+            0.25,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(npc::NpcUiState::default())
+        .insert_resource(npc::PlayerVitals::default())
+        .insert_resource(npc::NpcStimulus::default())
+        .insert_resource(npc::DeadNpcCells::default())
+        .insert_resource(water::LoadedWater::default())
+        .insert_resource(water::WaterPhysicsConfig::default())
+        .insert_resource(water::WaterFlowSim::default())
+        .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
+            0.08,
+            TimerMode::Repeating,
+        )))
+        .insert_resource(generation::GenerationConfig::default())
+        .insert_resource(generation::GenerationQueue::default())
+        .insert_resource(generation::GenerationRuntimeStats::default())
+        .insert_resource(generation::LiveLlmState::default())
+        .insert_resource(generation::PromptInputState::default())
+        .insert_resource(weather::DayNightState::default())
+        .insert_resource(weather::WeatherState::default())
+        .insert_resource(streaming::StreamingRuntimeStats::default())
+        .insert_resource(interact::PlacementPalette::default())
+        .insert_resource(interact::BlockInventory::default())
+        .insert_resource(ui::GameUiFlow::default())
+        .insert_resource(ui::DebugOverlayState::default())
+        .insert_resource(ui::FrameStats::default())
+        .add_event::<block_edit::LocalBlockEditEvent>()
+        .add_event::<block_edit::BlockMutationRequest>();
 }
 
 fn setup(

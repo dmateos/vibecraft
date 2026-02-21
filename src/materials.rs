@@ -1,8 +1,6 @@
 //! Terrain material types and shader binding layouts.
 //! Defines the GPU parameter interface used by voxel terrain rendering and
 //! keeps material/shader coupling explicit for visual tuning work.
-#![allow(dead_code)]
-
 use bevy::pbr::Material;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;

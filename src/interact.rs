@@ -1,25 +1,19 @@
 //! Player block interaction systems: targeting, break/place, palette/inventory.
 //! Owns raycast-based edit actions, local inventory accounting, and placement
 //! constraints (collision/authority) so building logic stays centralized.
-use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
-use bevy::input::{ButtonState, mouse::MouseButtonInput};
+use bevy::input::{mouse::MouseButtonInput, ButtonState};
+use bevy::prelude::*;
 
-use crate::config::{BREAK_REACH, CHUNK_SIZE};
-use crate::generation::PromptInputState;
-use crate::net_client::NetClientState;
-use crate::player::{collides_player, FlyCam};
-use crate::world::{
-    div_floor, get_block_world, remesh_chunk, set_block_world, Block, LoadedChunks, VoxelWorld,
+use crate::block_edit::{self, BlockMutationRequest};
+use crate::config::{
+    BREAK_REACH, CHUNK_SIZE, EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS, WORLD_HEIGHT,
 };
-
-#[derive(Event, Clone, Copy, Debug)]
-pub struct LocalBlockEditEvent {
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub block: Block,
-}
+use crate::generation::PromptInputState;
+use crate::net_client::{is_remote_simulation, NetClientState};
+use crate::physics::CollisionAabb;
+use crate::player::FlyCam;
+use crate::world::{div_floor, get_block_world, Block, VoxelWorld};
 
 #[derive(Resource)]
 pub struct BlockInventory {
@@ -30,7 +24,9 @@ impl Default for BlockInventory {
     fn default() -> Self {
         use Block::*;
         let mut counts = std::collections::HashMap::new();
-        for b in [Stone, Dirt, Grass, Sand, Wood, Leaves, Red, Blue, Yellow, Purple, Cyan] {
+        for b in [
+            Stone, Dirt, Grass, Sand, Wood, Leaves, Red, Blue, Yellow, Purple, Cyan,
+        ] {
             counts.insert(b, 0);
         }
         Self { counts }
@@ -145,17 +141,12 @@ pub fn break_targeted_block(
     mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
-    mut world: ResMut<VoxelWorld>,
-    loaded: Res<LoadedChunks>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    world: Res<VoxelWorld>,
     mut inv: ResMut<BlockInventory>,
-    mut edits: EventWriter<LocalBlockEditEvent>,
+    mut edits: EventWriter<BlockMutationRequest>,
     prompt: Res<PromptInputState>,
 ) {
-    if let Some(net) = net
-        && net.cfg.enabled
-        && net.connected
-    {
+    if is_remote_simulation(net.as_deref()) {
         return;
     }
     if prompt.active {
@@ -172,39 +163,38 @@ pub fn break_targeted_block(
         return;
     };
 
-    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH) else {
+    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH)
+    else {
         return;
     };
 
     let broken = get_block_world(&world.chunks, hit.solid.x, hit.solid.y, hit.solid.z);
-    if set_block_world(&mut world.chunks, hit.solid.x, hit.solid.y, hit.solid.z, Block::Air) {
-        inv.add(broken, 1);
-        edits.send(LocalBlockEditEvent {
-            x: hit.solid.x,
-            y: hit.solid.y,
-            z: hit.solid.z,
-            block: Block::Air,
-        });
-        remesh_at_cell_immediate(hit.solid, &world.chunks, &loaded, &mut meshes);
+    if broken == Block::Air || !can_write_cell(&world.chunks, hit.solid) {
+        return;
     }
+
+    inv.add(broken, 1);
+    block_edit::enqueue_block_mutation(
+        &mut edits,
+        hit.solid.x,
+        hit.solid.y,
+        hit.solid.z,
+        Block::Air,
+        true,
+    );
 }
 
 pub fn place_targeted_block(
     mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
-    mut world: ResMut<VoxelWorld>,
-    loaded: Res<LoadedChunks>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    world: Res<VoxelWorld>,
     palette: Res<PlacementPalette>,
     mut inv: ResMut<BlockInventory>,
-    mut edits: EventWriter<LocalBlockEditEvent>,
+    mut edits: EventWriter<BlockMutationRequest>,
     prompt: Res<PromptInputState>,
 ) {
-    if let Some(net) = net
-        && net.cfg.enabled
-        && net.connected
-    {
+    if is_remote_simulation(net.as_deref()) {
         return;
     }
     if prompt.active {
@@ -221,7 +211,8 @@ pub fn place_targeted_block(
         return;
     };
 
-    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH) else {
+    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH)
+    else {
         return;
     };
 
@@ -240,36 +231,24 @@ pub fn place_targeted_block(
         return;
     }
 
-    if !set_block_world(
-        &mut world.chunks,
+    if !can_write_cell(&world.chunks, hit.previous_air) {
+        inv.add(place_block, 1);
+        return;
+    }
+
+    if player_intersects_cell(cam.translation, hit.previous_air) {
+        inv.add(place_block, 1);
+        return;
+    }
+
+    block_edit::enqueue_block_mutation(
+        &mut edits,
         hit.previous_air.x,
         hit.previous_air.y,
         hit.previous_air.z,
         place_block,
-    ) {
-        inv.add(place_block, 1);
-        return;
-    }
-
-    if collides_player(cam.translation, &world.chunks) {
-        let _ = set_block_world(
-            &mut world.chunks,
-            hit.previous_air.x,
-            hit.previous_air.y,
-            hit.previous_air.z,
-            Block::Air,
-        );
-        inv.add(place_block, 1);
-        return;
-    }
-
-    remesh_at_cell_immediate(hit.previous_air, &world.chunks, &loaded, &mut meshes);
-    edits.send(LocalBlockEditEvent {
-        x: hit.previous_air.x,
-        y: hit.previous_air.y,
-        z: hit.previous_air.z,
-        block: place_block,
-    });
+        true,
+    );
 }
 
 pub fn highlight_targeted_block(
@@ -281,7 +260,8 @@ pub fn highlight_targeted_block(
         return;
     };
 
-    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH) else {
+    let Some(hit) = raycast_blocks(cam.translation, *cam.forward(), &world.chunks, BREAK_REACH)
+    else {
         return;
     };
 
@@ -292,19 +272,6 @@ pub fn highlight_targeted_block(
     );
     let transform = Transform::from_translation(center).with_scale(Vec3::splat(1.01));
     gizmos.cuboid(transform, Color::srgba(0.95, 0.95, 0.95, 0.95));
-}
-
-fn remesh_at_cell_immediate(
-    cell: IVec3,
-    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
-    loaded: &LoadedChunks,
-    meshes: &mut Assets<Mesh>,
-) {
-    let chunk = IVec2::new(
-        div_floor(cell.x, CHUNK_SIZE as i32),
-        div_floor(cell.z, CHUNK_SIZE as i32),
-    );
-    remesh_chunk(chunk, chunks, loaded, meshes);
 }
 
 fn raycast_blocks(
@@ -344,4 +311,30 @@ fn raycast_blocks(
     }
 
     None
+}
+
+fn can_write_cell(
+    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
+    cell: IVec3,
+) -> bool {
+    if !(0..WORLD_HEIGHT as i32).contains(&cell.y) {
+        return false;
+    }
+    let chunk = IVec2::new(
+        div_floor(cell.x, CHUNK_SIZE as i32),
+        div_floor(cell.z, CHUNK_SIZE as i32),
+    );
+    chunks.contains_key(&chunk)
+}
+
+fn player_intersects_cell(eye_pos: Vec3, cell: IVec3) -> bool {
+    let body = CollisionAabb::from_eye(eye_pos, PLAYER_RADIUS, EYE_HEIGHT, PLAYER_HEIGHT);
+    let cell_min = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32);
+    let cell_max = cell_min + Vec3::ONE;
+    body.max.x > cell_min.x
+        && body.min.x < cell_max.x
+        && body.max.y > cell_min.y
+        && body.min.y < cell_max.y
+        && body.max.z > cell_min.z
+        && body.min.z < cell_max.z
 }

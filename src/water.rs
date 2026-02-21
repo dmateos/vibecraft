@@ -1,8 +1,6 @@
 //! Water surface rendering and optional flow simulation subsystem.
 //! Manages water chunk meshes/materials near the camera and can run a bounded
 //! cell-flow update pass when physics mode is enabled.
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::pbr::{Material, MaterialPlugin, NotShadowCaster};
@@ -14,9 +12,9 @@ use bevy::render::render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, S
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, VIEW_DISTANCE_CHUNKS, WORLD_HEIGHT};
 use crate::generation::PromptInputState;
-use crate::interact::LocalBlockEditEvent;
+use crate::block_edit::LocalBlockEditEvent;
 use crate::player::FlyCam;
-use crate::world::{chunk_distance_sq, div_floor, get_block_world, Block, Chunk, VoxelWorld};
+use crate::world::{Block, Chunk, VoxelWorld, chunk_distance_sq, div_floor, get_block_world};
 
 const MAX_WATER_CHUNKS_PER_TICK: usize = 24;
 const MAX_WATER_SIM_CELLS_PER_TICK: usize = 180;
@@ -153,17 +151,13 @@ impl WaterFlowSim {
             self.enqueue(cell + o);
         }
     }
-
 }
 
 pub fn water_material_plugin() -> MaterialPlugin<WaterSurfaceMaterial> {
     MaterialPlugin::<WaterSurfaceMaterial>::default()
 }
 
-pub fn setup_water(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<WaterSurfaceMaterial>>,
-) {
+pub fn setup_water(mut commands: Commands, mut materials: ResMut<Assets<WaterSurfaceMaterial>>) {
     let material = materials.add(WaterSurfaceMaterial {
         params: WaterMaterialParams {
             shallow_color: Vec4::new(0.10, 0.58, 0.88, 0.90),
@@ -199,11 +193,7 @@ pub fn queue_water_updates_from_block_edits(
         if !near_dynamic && !near_sea_band {
             continue;
         }
-        ensure_source_mask_for_chunk(
-            &mut sim,
-            &world.chunks,
-            center_chunk,
-        );
+        ensure_source_mask_for_chunk(&mut sim, &world.chunks, center_chunk);
         if !has_nearby_water(center, &world.chunks, &sim) {
             continue;
         }
@@ -415,7 +405,11 @@ pub fn stream_water_around_camera(
     }
 }
 
-fn build_water_mesh_for_chunk(pos: IVec2, chunks: &HashMap<IVec2, Chunk>, sim: &WaterFlowSim) -> Mesh {
+fn build_water_mesh_for_chunk(
+    pos: IVec2,
+    chunks: &HashMap<IVec2, Chunk>,
+    sim: &WaterFlowSim,
+) -> Mesh {
     let base_x = pos.x * CHUNK_SIZE as i32;
     let base_z = pos.y * CHUNK_SIZE as i32;
 
@@ -459,27 +453,27 @@ fn build_water_mesh_for_chunk(pos: IVec2, chunks: &HashMap<IVec2, Chunk>, sim: &
             if level == 0 {
                 continue;
             }
-        if is_solid_block(chunks, cell.x, cell.y, cell.z) {
-            continue;
-        }
-        if level_at(cell + IVec3::Y, chunks, sim) > 0 {
-            continue;
-        }
+            if is_solid_block(chunks, cell.x, cell.y, cell.z) {
+                continue;
+            }
+            if level_at(cell + IVec3::Y, chunks, sim) > 0 {
+                continue;
+            }
 
-        let lx = (cell.x - base_x) as f32;
-        let lz = (cell.z - base_z) as f32;
-        let y = cell.y as f32 + water_height(level);
-        let depth = ((SEA_LEVEL - cell.y).max(0) as f32 / 28.0).clamp(0.15, 1.0);
-        push_top_quad(
-            &mut positions,
-            &mut normals,
-            &mut colors,
-            &mut indices,
-            lx,
-            y,
-            lz,
-            depth,
-        );
+            let lx = (cell.x - base_x) as f32;
+            let lz = (cell.z - base_z) as f32;
+            let y = cell.y as f32 + water_height(level);
+            let depth = ((SEA_LEVEL - cell.y).max(0) as f32 / 28.0).clamp(0.15, 1.0);
+            push_top_quad(
+                &mut positions,
+                &mut normals,
+                &mut colors,
+                &mut indices,
+                lx,
+                y,
+                lz,
+                depth,
+            );
         }
     }
 
@@ -626,7 +620,11 @@ fn water_height(level: u8) -> f32 {
     0.90 + l * 0.10
 }
 
-fn ensure_source_mask_for_chunk(sim: &mut WaterFlowSim, chunks: &HashMap<IVec2, Chunk>, pos: IVec2) {
+fn ensure_source_mask_for_chunk(
+    sim: &mut WaterFlowSim,
+    chunks: &HashMap<IVec2, Chunk>,
+    pos: IVec2,
+) {
     if sim.source_masks.contains_key(&pos) {
         return;
     }
@@ -681,7 +679,10 @@ pub fn clear_water_sim_on_world_reset_keys(
     if prompt.active {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyR) || keys.just_pressed(KeyCode::F5) || keys.just_pressed(KeyCode::F6) {
+    if keys.just_pressed(KeyCode::KeyR)
+        || keys.just_pressed(KeyCode::F5)
+        || keys.just_pressed(KeyCode::F6)
+    {
         sim.clear();
     }
 }

@@ -12,7 +12,8 @@ use crate::config::{
     WALK_SPEED,
 };
 use crate::generation::PromptInputState;
-use crate::world::{get_block_world, Chunk, VoxelWorld};
+use crate::physics::{self, CollisionAabb};
+use crate::world::{Chunk, VoxelWorld};
 
 #[derive(Component)]
 pub struct FlyCam {
@@ -218,7 +219,11 @@ fn chunks_loaded_for_player(eye_pos: Vec3, chunks: &HashMap<IVec2, Chunk>) -> bo
     true
 }
 
-fn try_step_up(current: Vec3, horizontal_delta: Vec3, chunks: &HashMap<IVec2, Chunk>) -> Option<Vec3> {
+fn try_step_up(
+    current: Vec3,
+    horizontal_delta: Vec3,
+    chunks: &HashMap<IVec2, Chunk>,
+) -> Option<Vec3> {
     let raised = current + Vec3::Y * STEP_HEIGHT;
     if collides_player(raised, chunks) {
         return None;
@@ -245,33 +250,6 @@ fn try_step_up(current: Vec3, horizontal_delta: Vec3, chunks: &HashMap<IVec2, Ch
 }
 
 pub fn collides_player(eye_pos: Vec3, chunks: &HashMap<IVec2, Chunk>) -> bool {
-    let min = Vec3::new(
-        eye_pos.x - PLAYER_RADIUS,
-        eye_pos.y - EYE_HEIGHT,
-        eye_pos.z - PLAYER_RADIUS,
-    );
-    let max = Vec3::new(
-        eye_pos.x + PLAYER_RADIUS,
-        eye_pos.y + (PLAYER_HEIGHT - EYE_HEIGHT),
-        eye_pos.z + PLAYER_RADIUS,
-    );
-
-    let min_x = min.x.floor() as i32;
-    let max_x = max.x.floor() as i32;
-    let min_y = min.y.floor() as i32;
-    let max_y = max.y.floor() as i32;
-    let min_z = min.z.floor() as i32;
-    let max_z = max.z.floor() as i32;
-
-    for y in min_y..=max_y {
-        for z in min_z..=max_z {
-            for x in min_x..=max_x {
-                if get_block_world(chunks, x, y, z) != crate::world::Block::Air {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+    let body = CollisionAabb::from_eye(eye_pos, PLAYER_RADIUS, EYE_HEIGHT, PLAYER_HEIGHT);
+    physics::query_collision(chunks, body, physics::is_solid_for_body)
 }

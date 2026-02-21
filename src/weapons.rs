@@ -1,22 +1,21 @@
 //! Weapon gameplay systems: gun, bullets, grenades, VFX, and destruction queue.
 //! Handles projectile simulation, NPC damage/knockback, block destruction, and
 //! bounded explosion/remesh workloads to keep frame pacing stable.
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
+use bevy::ecs::query::QueryFilter;
 use bevy::math::primitives::Cuboid;
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
-use bevy::ecs::query::QueryFilter;
 
-use crate::config::{BREAK_REACH, CHUNK_SIZE};
+use crate::block_edit::{self, BlockMutationRequest};
+use crate::config::BREAK_REACH;
 use crate::generation::PromptInputState;
-use crate::interact::{BlockInventory, LocalBlockEditEvent};
-use crate::net_client::NetClientState;
+use crate::interact::BlockInventory;
+use crate::net_client::{is_remote_simulation, NetClientState};
 use crate::npc::{DeadNpcCells, LoadedNpcs, Npc};
 use crate::player::FlyCam;
-use crate::world::{
-    div_floor, get_block_world, remesh_chunk, set_block_world, Block, LoadedChunks, VoxelWorld,
-};
+use crate::world::{get_block_world, Block, VoxelWorld};
 
 const GUN_RANGE: f32 = BREAK_REACH * 2.3;
 const BULLET_SPEED: f32 = 74.0;
@@ -28,7 +27,6 @@ const GRENADE_RADIUS: i32 = 4;
 const MUZZLE_FLASH_TIME: f32 = 0.045;
 const EXPLOSION_FX_TIME: f32 = 0.34;
 const EXPLOSION_EDITS_PER_TICK: usize = 320;
-const EXPLOSION_REMESHES_PER_TICK: usize = 1;
 const GUN_DAMAGE: f32 = 34.0;
 
 #[derive(Component)]
@@ -69,8 +67,6 @@ struct ExplosionJob {
 #[derive(Resource, Default)]
 pub struct ExplosionWorkQueue {
     jobs: VecDeque<ExplosionJob>,
-    dirty_order: VecDeque<IVec2>,
-    dirty_set: HashSet<IVec2>,
 }
 
 #[derive(Resource)]
@@ -318,17 +314,15 @@ pub fn tick_bullets(
     time: Res<Time>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Transform, &mut Bullet), Without<Npc>>,
-    mut world: ResMut<VoxelWorld>,
-    loaded: Res<LoadedChunks>,
+    world: Res<VoxelWorld>,
     _loaded_npcs: ResMut<LoadedNpcs>,
     mut inv: ResMut<BlockInventory>,
     mut dead_cells: ResMut<DeadNpcCells>,
-    mut block_edits: EventWriter<LocalBlockEditEvent>,
+    mut block_edits: EventWriter<BlockMutationRequest>,
     mut npc_q: ParamSet<(
         Query<(Entity, &Transform, &Npc), Without<Bullet>>,
         Query<(&mut Npc, &mut Transform), Without<Bullet>>,
     )>,
-    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let dt = time.delta_seconds();
 
@@ -366,12 +360,7 @@ pub fn tick_bullets(
                         npc_transform.translation += bullet_dir * 0.46;
                         npc_transform.translation.y += 0.10;
                         let yaw = -npc.heading + std::f32::consts::FRAC_PI_2;
-                        npc_transform.rotation = Quat::from_euler(
-                            EulerRot::XYZ,
-                            0.0,
-                            yaw,
-                            1.20,
-                        );
+                        npc_transform.rotation = Quat::from_euler(EulerRot::XYZ, 0.0, yaw, 1.20);
                     }
                 }
                 commands.entity(entity).despawn_recursive();
@@ -381,19 +370,15 @@ pub fn tick_bullets(
 
         if let Some((hit, _)) = block_hit {
             let broken = get_block_world(&world.chunks, hit.x, hit.y, hit.z);
-            if set_block_world(&mut world.chunks, hit.x, hit.y, hit.z, Block::Air) {
+            if broken != Block::Air {
                 inv.add(broken, 1);
-                block_edits.send(LocalBlockEditEvent {
-                    x: hit.x,
-                    y: hit.y,
-                    z: hit.z,
-                    block: Block::Air,
-                });
-                remesh_for_cells(
-                    [IVec3::new(hit.x, hit.y, hit.z)].into_iter(),
-                    &world.chunks,
-                    &loaded,
-                    &mut meshes,
+                block_edit::enqueue_block_mutation(
+                    &mut block_edits,
+                    hit.x,
+                    hit.y,
+                    hit.z,
+                    Block::Air,
+                    true,
                 );
             }
             commands.entity(entity).despawn_recursive();
@@ -412,10 +397,7 @@ pub fn throw_grenade_on_key(
     assets: Res<WeaponAssets>,
     prompt: Res<PromptInputState>,
 ) {
-    if let Some(net) = net
-        && net.cfg.enabled
-        && net.connected
-    {
+    if is_remote_simulation(net.as_deref()) {
         // In network mode, server is authoritative for grenade explosions.
         return;
     }
@@ -461,7 +443,11 @@ pub fn tick_grenades(
         grenade.velocity.y += GRENADE_GRAVITY * dt;
         let next = transform.translation + grenade.velocity * dt;
 
-        let cell = IVec3::new(next.x.floor() as i32, next.y.floor() as i32, next.z.floor() as i32);
+        let cell = IVec3::new(
+            next.x.floor() as i32,
+            next.y.floor() as i32,
+            next.z.floor() as i32,
+        );
         let hit_solid = get_block_world(&world.chunks, cell.x, cell.y, cell.z) != Block::Air;
 
         if hit_solid {
@@ -494,8 +480,7 @@ pub fn tick_grenades(
 
 pub fn process_explosion_jobs(
     mut work: ResMut<ExplosionWorkQueue>,
-    mut world: ResMut<VoxelWorld>,
-    mut block_edits: EventWriter<LocalBlockEditEvent>,
+    mut block_edits: EventWriter<BlockMutationRequest>,
 ) {
     let mut budget = EXPLOSION_EDITS_PER_TICK;
 
@@ -509,21 +494,14 @@ pub fn process_explosion_jobs(
             job.cursor += 1;
             budget -= 1;
 
-            if set_block_world(&mut world.chunks, cell.x, cell.y, cell.z, Block::Air) {
-                block_edits.send(LocalBlockEditEvent {
-                    x: cell.x,
-                    y: cell.y,
-                    z: cell.z,
-                    block: Block::Air,
-                });
-                mark_dirty_chunk(
-                    &mut work,
-                    IVec2::new(
-                        div_floor(cell.x, CHUNK_SIZE as i32),
-                        div_floor(cell.z, CHUNK_SIZE as i32),
-                    ),
-                );
-            }
+            block_edit::enqueue_block_mutation(
+                &mut block_edits,
+                cell.x,
+                cell.y,
+                cell.z,
+                Block::Air,
+                true,
+            );
         }
 
         if job.cursor < job.cells.len() {
@@ -533,27 +511,8 @@ pub fn process_explosion_jobs(
     }
 }
 
-pub fn process_dirty_chunk_remeshes(
-    mut work: ResMut<ExplosionWorkQueue>,
-    world: Res<VoxelWorld>,
-    loaded: Res<LoadedChunks>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let mut count = 0usize;
-    while count < EXPLOSION_REMESHES_PER_TICK {
-        let Some(chunk) = work.dirty_order.pop_front() else {
-            break;
-        };
-        work.dirty_set.remove(&chunk);
-        remesh_chunk(chunk, &world.chunks, &loaded, &mut meshes);
-        count += 1;
-    }
-}
-
 pub fn clear_explosion_work_queue(work: &mut ExplosionWorkQueue) {
     work.jobs.clear();
-    work.dirty_order.clear();
-    work.dirty_set.clear();
 }
 
 pub fn tick_weapon_vfx(
@@ -603,21 +562,6 @@ fn enqueue_explosion(work: &mut ExplosionWorkQueue, center: IVec3, radius: i32) 
     work.jobs.push_back(ExplosionJob { cells, cursor: 0 });
 }
 
-fn mark_dirty_chunk(work: &mut ExplosionWorkQueue, chunk: IVec2) {
-    let candidates = [
-        chunk,
-        chunk + IVec2::new(1, 0),
-        chunk + IVec2::new(-1, 0),
-        chunk + IVec2::new(0, 1),
-        chunk + IVec2::new(0, -1),
-    ];
-    for c in candidates {
-        if work.dirty_set.insert(c) {
-            work.dirty_order.push_back(c);
-        }
-    }
-}
-
 fn spawn_explosion_fx(commands: &mut Commands, assets: &WeaponAssets, at: Vec3, radius: f32) {
     commands.spawn((
         PbrBundle {
@@ -637,26 +581,6 @@ fn spawn_explosion_fx(commands: &mut Commands, assets: &WeaponAssets, at: Vec3, 
         WeaponVfx,
         NotShadowCaster,
     ));
-}
-
-fn remesh_for_cells(
-    cells: impl Iterator<Item = IVec3>,
-    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
-    loaded: &LoadedChunks,
-    meshes: &mut Assets<Mesh>,
-) {
-    let mut touched = HashSet::new();
-    for cell in cells {
-        let chunk = IVec2::new(
-            div_floor(cell.x, CHUNK_SIZE as i32),
-            div_floor(cell.z, CHUNK_SIZE as i32),
-        );
-        touched.insert(chunk);
-    }
-
-    for chunk in touched {
-        remesh_chunk(chunk, chunks, loaded, meshes);
-    }
 }
 
 fn raycast_block(
