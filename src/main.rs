@@ -77,12 +77,14 @@ fn main() {
         .insert_resource(streaming::StreamingRuntimeStats::default())
         .insert_resource(interact::PlacementPalette::default())
         .insert_resource(interact::BlockInventory::default())
+        .insert_resource(ui::GameUiFlow::default())
         .insert_resource(ui::DebugOverlayState::default())
         .insert_resource(ui::FrameStats::default())
         .add_event::<interact::LocalBlockEditEvent>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "VibeCraft".to_string(),
+                resolution: (1728.0, 972.0).into(),
                 present_mode: bevy::window::PresentMode::AutoNoVsync,
                 ..default()
             }),
@@ -103,7 +105,22 @@ fn main() {
                 ui::spawn_crosshair,
                 ui::spawn_hud,
                 ui::spawn_hotbar,
+                ui::spawn_start_menu,
+                ui::spawn_loading_overlay,
             ),
+        )
+        .add_systems(
+            Update,
+            (
+                net_client::setup_net_client,
+                net_client::setup_net_visual_assets,
+                net_client::tick_net_client,
+                net_client::apply_remote_block_edits,
+                net_client::sync_remote_entities,
+                net_client::spawn_net_fx,
+                net_client::tick_net_fx,
+            )
+                .run_if(world_phase_active),
         )
         .add_systems(
             Update,
@@ -113,8 +130,6 @@ fn main() {
                 interact::cycle_palette_on_scroll,
                 interact::break_targeted_block,
                 interact::place_targeted_block,
-                streaming::stream_chunks_around_camera,
-                npc::stream_npcs_around_camera,
                 npc::npc_interactions,
                 npc::tick_npcs,
                 weapons::ensure_view_gun,
@@ -125,22 +140,9 @@ fn main() {
                 weapons::process_explosion_jobs,
                 weapons::process_dirty_chunk_remeshes,
                 weapons::tick_weapon_vfx,
-            ),
+            )
+                .run_if(gameplay_phase_active),
         )
-        .add_systems(
-            Update,
-            (
-                water::queue_water_updates_from_block_edits,
-                water::tick_water_simulation,
-                water::refresh_dirty_water_meshes,
-                water::stream_water_around_camera,
-                clouds::stream_clouds_around_camera,
-                clouds::animate_clouds,
-            ),
-        )
-        .add_systems(Update, npc::capture_player_noise)
-        .add_systems(Update, npc::draw_npc_debug_gizmos)
-        .add_systems(Update, sky::update_sky)
         .add_systems(
             Update,
             (
@@ -153,20 +155,41 @@ fn main() {
                 generation::poll_live_llm_result,
                 generation::update_prompt_window_title,
                 generation::process_generation_queue,
+                water::clear_water_sim_on_world_reset_keys,
+                regenerate_world_on_key,
+                toggle_terrain_mode_on_key,
+                weather::cycle_weather_on_key,
+                water::toggle_water_physics_on_key,
+                npc::capture_player_noise,
+            )
+                .run_if(gameplay_phase_active),
+        )
+        .add_systems(
+            Update,
+            (
+                ui::handle_start_menu_buttons,
+                ui::tick_loading_gate,
+                ui::sync_ui_phase_visibility,
             ),
         )
         .add_systems(
             Update,
             (
-                water::clear_water_sim_on_world_reset_keys,
-                regenerate_world_on_key,
-                toggle_terrain_mode_on_key,
+                streaming::stream_chunks_around_camera,
+                npc::stream_npcs_around_camera,
+                water::queue_water_updates_from_block_edits,
+                water::tick_water_simulation,
+                water::refresh_dirty_water_meshes,
+                water::stream_water_around_camera,
+                clouds::stream_clouds_around_camera,
+                clouds::animate_clouds,
                 weather::tick_day_night,
-                weather::cycle_weather_on_key,
                 weather::tick_weather_blend,
                 weather::apply_weather_to_materials,
-                water::toggle_water_physics_on_key,
-            ),
+                sky::update_sky,
+                npc::draw_npc_debug_gizmos,
+            )
+                .run_if(world_phase_active),
         )
         .add_systems(
             Update,
@@ -181,26 +204,27 @@ fn main() {
 
     if net_cfg.enabled {
         info!(
-            "network client enabled: connect={} name={}",
+            "network client boot config: connect={} name={}",
             net_cfg
                 .server
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "<none>".to_string()),
             net_cfg.name
         );
-        app.insert_resource(net_client::NetClientState::new(net_cfg))
-            .add_systems(Startup, net_client::setup_net_client)
-            .add_systems(Startup, net_client::setup_net_visual_assets)
-            .add_systems(Update, net_client::tick_net_client);
-        app.add_systems(Update, net_client::apply_remote_block_edits)
-            .add_systems(Update, net_client::sync_remote_entities)
-            .add_systems(Update, net_client::spawn_net_fx)
-            .add_systems(Update, net_client::tick_net_fx);
     } else {
         info!("network client disabled (local mode)");
     }
+    app.insert_resource(net_client::NetClientState::new(net_cfg));
 
     app.run();
+}
+
+fn world_phase_active(flow: Res<ui::GameUiFlow>) -> bool {
+    !matches!(flow.phase, ui::GameUiPhase::Menu)
+}
+
+fn gameplay_phase_active(flow: Res<ui::GameUiFlow>) -> bool {
+    matches!(flow.phase, ui::GameUiPhase::Playing)
 }
 
 fn setup(
@@ -262,8 +286,8 @@ fn setup(
     });
 
     if let Ok(mut window) = windows.get_single_mut() {
-        window.cursor.visible = false;
-        window.cursor.grab_mode = CursorGrabMode::Locked;
+        window.cursor.visible = true;
+        window.cursor.grab_mode = CursorGrabMode::None;
     }
 }
 

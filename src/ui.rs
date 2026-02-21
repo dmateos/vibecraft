@@ -3,10 +3,12 @@
 //! resources (FPS, mode state, selected block, and inventory counts).
 use bevy::prelude::*;
 use std::collections::VecDeque;
+use std::net::SocketAddr;
 
 use crate::config::CHUNK_SIZE;
 use crate::generation::{GenerationQueue, GenerationRuntimeStats};
 use crate::interact::{BlockInventory, PlacementPalette};
+use crate::net_client::NetClientState;
 use crate::npc::{Npc, NpcKind, NpcStimulus, NpcUiState, PlayerVitals};
 use crate::player::FlyCam;
 use crate::streaming::StreamingRuntimeStats;
@@ -22,6 +24,46 @@ pub(crate) struct DebugHudText;
 #[derive(Component)]
 pub(crate) struct HotbarSlot {
     index: usize,
+}
+
+#[derive(Component)]
+pub(crate) struct CrosshairRoot;
+
+#[derive(Component)]
+pub(crate) struct HotbarRoot;
+
+#[derive(Component)]
+pub(crate) struct StartMenuRoot;
+
+#[derive(Component)]
+pub(crate) struct LoadingOverlayRoot;
+
+#[derive(Component)]
+pub(crate) struct LocalPlayButton;
+
+#[derive(Component)]
+pub(crate) struct OnlinePlayButton;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameUiPhase {
+    Menu,
+    Loading,
+    Playing,
+}
+
+#[derive(Resource)]
+pub struct GameUiFlow {
+    pub phase: GameUiPhase,
+    pub warmup_min_chunks: usize,
+}
+
+impl Default for GameUiFlow {
+    fn default() -> Self {
+        Self {
+            phase: GameUiPhase::Menu,
+            warmup_min_chunks: 260,
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -56,11 +98,13 @@ pub fn spawn_crosshair(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                display: Display::None,
                 ..default()
             },
             background_color: BackgroundColor(Color::NONE),
             ..default()
         })
+        .insert(CrosshairRoot)
         .with_children(|parent| {
             parent.spawn(NodeBundle {
                 style: Style {
@@ -103,6 +147,7 @@ pub fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
                 top: Val::Px(10.0),
                 left: Val::Px(12.0),
                 padding: UiRect::all(Val::Px(9.0)),
+                display: Display::None,
                 ..default()
             })
         },
@@ -145,11 +190,13 @@ pub fn spawn_hotbar(
                 margin: UiRect::left(Val::Px(-430.0)),
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(6.0),
+                display: Display::None,
                 ..default()
             },
             background_color: BackgroundColor(Color::NONE),
             ..default()
         })
+        .insert(HotbarRoot)
         .with_children(|parent| {
             for index in 0..palette.len() {
                 let (block, name) = palette
@@ -185,11 +232,275 @@ pub fn spawn_hotbar(
         });
 }
 
+pub fn spawn_start_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = asset_server.load("fonts/DebugSans.ttf");
+    commands
+        .spawn((
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.84)),
+                ..default()
+            },
+            StartMenuRoot,
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(520.0),
+                        padding: UiRect::all(Val::Px(16.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.08, 0.11, 0.16, 0.92)),
+                    ..default()
+                })
+                .with_children(|panel| {
+                    panel.spawn(TextBundle::from_section(
+                        "VibeCraft",
+                        TextStyle {
+                            font: font.clone(),
+                            font_size: 32.0,
+                            color: Color::srgba(0.96, 0.97, 1.0, 0.98),
+                        },
+                    ));
+                    panel.spawn(TextBundle::from_section(
+                        "Choose start mode",
+                        TextStyle {
+                            font: font.clone(),
+                            font_size: 18.0,
+                            color: Color::srgba(0.80, 0.88, 0.98, 0.96),
+                        },
+                    ));
+
+                    panel
+                        .spawn((
+                            ButtonBundle {
+                                style: Style {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(44.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.18, 0.34, 0.24, 0.96,
+                                )),
+                                ..default()
+                            },
+                            LocalPlayButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn(TextBundle::from_section(
+                                "Play Local",
+                                TextStyle {
+                                    font: font.clone(),
+                                    font_size: 18.0,
+                                    color: Color::WHITE,
+                                },
+                            ));
+                        });
+
+                    panel
+                        .spawn((
+                            ButtonBundle {
+                                style: Style {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(44.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.17, 0.22, 0.42, 0.96,
+                                )),
+                                ..default()
+                            },
+                            OnlinePlayButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn(TextBundle::from_section(
+                                "Play Online (127.0.0.1:40000)",
+                                TextStyle {
+                                    font: font.clone(),
+                                    font_size: 18.0,
+                                    color: Color::WHITE,
+                                },
+                            ));
+                        });
+                });
+        });
+}
+
+pub fn spawn_loading_overlay(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = asset_server.load("fonts/DebugSans.ttf");
+    commands.spawn((
+        TextBundle {
+            text: Text::from_section(
+                "Loading world...",
+                TextStyle {
+                    font,
+                    font_size: 28.0,
+                    color: Color::srgba(0.96, 0.98, 1.0, 0.98),
+                },
+            ),
+            style: Style {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-110.0)),
+                display: Display::None,
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.03, 0.05, 0.08, 0.84)),
+            ..default()
+        },
+        LoadingOverlayRoot,
+    ));
+}
+
+pub fn handle_start_menu_buttons(
+    mut interactions: Query<
+        (
+            Option<&LocalPlayButton>,
+            Option<&OnlinePlayButton>,
+            &Interaction,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut flow: ResMut<GameUiFlow>,
+    mut net: ResMut<NetClientState>,
+) {
+    if flow.phase != GameUiPhase::Menu {
+        return;
+    }
+
+    for (local, online, interaction) in &mut interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if local.is_some() {
+            net.cfg.enabled = false;
+            net.connected = false;
+            flow.phase = GameUiPhase::Loading;
+        } else if online.is_some() {
+            net.cfg.enabled = true;
+            if net.cfg.server.is_none() {
+                net.cfg.server = Some(
+                    "127.0.0.1:40000"
+                        .parse::<SocketAddr>()
+                        .expect("default online address should parse"),
+                );
+            }
+            flow.phase = GameUiPhase::Loading;
+        }
+    }
+}
+
+pub fn tick_loading_gate(
+    mut flow: ResMut<GameUiFlow>,
+    loaded_chunks: Res<LoadedChunks>,
+    stats: Res<StreamingRuntimeStats>,
+) {
+    if flow.phase != GameUiPhase::Loading {
+        return;
+    }
+    if loaded_chunks.entries.len() >= flow.warmup_min_chunks
+        && stats.generated_last_tick <= 2
+        && stats.meshed_last_tick <= 2
+    {
+        flow.phase = GameUiPhase::Playing;
+    }
+}
+
+pub fn sync_ui_phase_visibility(
+    flow: Res<GameUiFlow>,
+    mut windows: Query<&mut Window>,
+    mut qset: ParamSet<(
+        Query<&mut Style, With<StartMenuRoot>>,
+        Query<&mut Style, With<LoadingOverlayRoot>>,
+        Query<&mut Style, With<CrosshairRoot>>,
+        Query<&mut Style, With<HudText>>,
+        Query<&mut Style, With<HotbarRoot>>,
+        Query<&mut Style, With<DebugHudText>>,
+    )>,
+) {
+    if !flow.is_changed() {
+        return;
+    }
+
+    let show_menu = flow.phase == GameUiPhase::Menu;
+    let show_loading = flow.phase == GameUiPhase::Loading;
+    let show_game_ui = flow.phase == GameUiPhase::Playing;
+
+    for mut style in &mut qset.p0() {
+        style.display = if show_menu {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut style in &mut qset.p1() {
+        style.display = if show_loading {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut style in &mut qset.p2() {
+        style.display = if show_game_ui {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut style in &mut qset.p3() {
+        style.display = if show_game_ui {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut style in &mut qset.p4() {
+        style.display = if show_game_ui {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut style in &mut qset.p5() {
+        if !show_game_ui {
+            style.display = Display::None;
+        }
+    }
+
+    if let Ok(mut window) = windows.get_single_mut() {
+        let cursor_free = !show_game_ui;
+        window.cursor.visible = cursor_free;
+        window.cursor.grab_mode = if cursor_free {
+            bevy::window::CursorGrabMode::None
+        } else {
+            bevy::window::CursorGrabMode::Locked
+        };
+    }
+}
+
 pub fn update_hotbar_ui(
+    flow: Res<GameUiFlow>,
     palette: Res<PlacementPalette>,
     inv: Res<BlockInventory>,
     mut q: Query<(&HotbarSlot, &mut Text, &mut BackgroundColor)>,
 ) {
+    if flow.phase != GameUiPhase::Playing {
+        return;
+    }
     if !palette.is_changed() && !inv.is_changed() {
         return;
     }
@@ -209,6 +520,7 @@ pub fn update_hotbar_ui(
 }
 
 pub fn update_hud_text(
+    flow: Res<GameUiFlow>,
     palette: Res<PlacementPalette>,
     inv: Res<BlockInventory>,
     terrain_mode: Res<TerrainMode>,
@@ -218,6 +530,9 @@ pub fn update_hud_text(
     frame: Res<FrameStats>,
     mut q: Query<&mut Text, With<HudText>>,
 ) {
+    if flow.phase != GameUiPhase::Playing {
+        return;
+    }
     let Ok(mut text) = q.get_single_mut() else {
         return;
     };

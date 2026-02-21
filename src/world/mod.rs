@@ -181,7 +181,7 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
     stamp_villages(&mut chunk, &noise);
     stamp_grand_monument(&mut chunk, &noise);
     stamp_megacity(&mut chunk, &noise);
-    stamp_harbor(&mut chunk, &noise);
+    stamp_maze(&mut chunk, &noise);
     stamp_desert_pyramid(&mut chunk, &noise);
     stamp_observatory(&mut chunk, &noise);
     chunk
@@ -1416,11 +1416,11 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 }
 
-fn stamp_harbor(chunk: &mut Chunk, noise: &TerrainNoise) {
-    let center = harbor_center(noise.seed);
+fn stamp_maze(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = maze_center(noise.seed);
     let cx = center.x;
     let cz = center.y;
-    let influence = 96;
+    let influence = 116;
 
     let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
     let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
@@ -1434,58 +1434,80 @@ fn stamp_harbor(chunk: &mut Chunk, noise: &TerrainNoise) {
         return;
     }
 
-    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 2, SEA_LEVEL + 7);
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 4, SEA_LEVEL + 18);
     flatten_village_ground(chunk, cx, base_y, cz, influence);
 
-    // Stone quay + dock roads.
-    for z in -78_i32..=78_i32 {
-        for x in -78_i32..=78_i32 {
-            if x.abs() <= 42 {
-                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
-            } else if z.abs() <= 4 {
-                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
+    // Maze slab.
+    for z in -96_i32..=96_i32 {
+        for x in -96_i32..=96_i32 {
+            set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+        }
+    }
+
+    // Outer wall ring.
+    for y in base_y + 2..=base_y + 8 {
+        for z in -96_i32..=96_i32 {
+            set_if_inside(chunk, cx - 96, y, cz + z, Block::Stone);
+            set_if_inside(chunk, cx + 96, y, cz + z, Block::Stone);
+        }
+        for x in -96_i32..=96_i32 {
+            set_if_inside(chunk, cx + x, y, cz - 96, Block::Stone);
+            set_if_inside(chunk, cx + x, y, cz + 96, Block::Stone);
+        }
+    }
+
+    // Deterministic labyrinth: 31x31 cells, each cell 6x6 blocks.
+    let cells: i32 = 31;
+    let half = cells / 2;
+    let cell_span: i32 = 6;
+    let wall_h = 5;
+
+    for gz in -half..=half {
+        for gx in -half..=half {
+            let wx = cx + gx * cell_span;
+            let wz = cz + gz * cell_span;
+
+            // Every cell gets a small floor patch; avoids accidental holes.
+            for dz in -2..=2 {
+                for dx in -2..=2 {
+                    set_if_inside(chunk, wx + dx, base_y + 2, wz + dz, Block::Dirt);
+                }
+            }
+
+            // Maze walls with seeded pattern; keep a broad cross corridor.
+            let cell_hash = hash3(gx, gz, noise.seed ^ 0x9D33_7AB1);
+            let carve_cross = gx.abs() <= 1 || gz.abs() <= 1;
+            let wall_here = !carve_cross && (cell_hash & 0x7) >= 2;
+            if wall_here {
+                for y in base_y + 2..=base_y + 1 + wall_h {
+                    for dz in -2..=2 {
+                        for dx in -2..=2 {
+                            set_if_inside(chunk, wx + dx, y, wz + dz, Block::Wood);
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Water basin.
-    for z in -66..=66 {
-        for x in -34..=34 {
-            for y in (base_y - 3)..=base_y {
-                set_if_inside(chunk, cx + x, y, cz + z, Block::Air);
-            }
-        }
-    }
-
-    // Piers.
-    for pier_z in (-54..=54).step_by(18) {
-        for z in pier_z - 2..=pier_z + 2 {
-            for x in 34..=64 {
-                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Wood);
-            }
-            for x in -64..=-34 {
-                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Wood);
-            }
-        }
-    }
-
-    // Warehouse row.
-    for (i, wx) in [-70, -54, 54, 70].into_iter().enumerate() {
-        let hz = if i < 2 { -62 } else { 62 };
-        place_house(
-            chunk,
-            cx + wx,
-            base_y + 2,
-            cz + hz,
-            5,
-            4,
-            5 + (i as i32 % 2),
-            hash3(wx, hz, noise.seed ^ 0xAA01_BC9D),
-        );
-    }
-
+    // Four gates into the maze.
     for y in base_y + 2..=base_y + 6 {
-        set_if_inside(chunk, cx, y, cz, Block::Cyan);
+        for t in -4..=4 {
+            set_if_inside(chunk, cx + t, y, cz - 96, Block::Air);
+            set_if_inside(chunk, cx + t, y, cz + 96, Block::Air);
+            set_if_inside(chunk, cx - 96, y, cz + t, Block::Air);
+            set_if_inside(chunk, cx + 96, y, cz + t, Block::Air);
+        }
+    }
+
+    // Center marker so it's visible from altitude.
+    for y in base_y + 2..=base_y + 12 {
+        for z in -2..=2 {
+            for x in -2..=2 {
+                let block = if y % 2 == 0 { Block::Purple } else { Block::Cyan };
+                set_if_inside(chunk, cx + x, y, cz + z, block);
+            }
+        }
     }
 }
 
@@ -1493,7 +1515,7 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
     let center = pyramid_center(noise.seed);
     let cx = center.x;
     let cz = center.y;
-    let influence = 84;
+    let influence = 108;
 
     let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
     let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
@@ -1507,20 +1529,20 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
         return;
     }
 
-    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 4, WORLD_HEIGHT as i32 - 60);
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 4, WORLD_HEIGHT as i32 - 96);
     flatten_village_ground(chunk, cx, base_y, cz, influence);
 
     // Courtyard.
-    for z in -54_i32..=54_i32 {
-        for x in -54_i32..=54_i32 {
+    for z in -64_i32..=64_i32 {
+        for x in -64_i32..=64_i32 {
             let mat = if (x + z).abs() % 5 == 0 { Block::Stone } else { Block::Sand };
             set_if_inside(chunk, cx + x, base_y + 1, cz + z, mat);
         }
     }
 
     // Main stepped pyramid.
-    for step in 0..24 {
-        let r = 40 - step * 2;
+    for step in 0..36 {
+        let r = 52 - step;
         let y = base_y + 2 + step;
         for z in -r..=r {
             for x in -r..=r {
@@ -1530,18 +1552,36 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 
     // Hollow entry chamber.
-    for y in base_y + 3..=base_y + 16 {
+    for y in base_y + 3..=base_y + 26 {
         for z in -3..=3 {
             for x in -4..=4 {
-                set_if_inside(chunk, cx + x, y, cz - 40 + z, Block::Air);
+                set_if_inside(chunk, cx + x, y, cz - 52 + z, Block::Air);
+            }
+        }
+    }
+
+    // Tall apex temple.
+    for y in base_y + 38..=base_y + 52 {
+        for z in -8_i32..=8_i32 {
+            for x in -8_i32..=8_i32 {
+                let border = x.abs() >= 7 || z.abs() >= 7;
+                set_if_inside(chunk, cx + x, y, cz + z, if border { Block::Stone } else { Block::Air });
+            }
+        }
+    }
+    for y in base_y + 53..=base_y + 66 {
+        let r = ((base_y + 66 - y) / 2).clamp(2, 6);
+        for z in -r..=r {
+            for x in -r..=r {
+                set_if_inside(chunk, cx + x, y, cz + z, Block::Sand);
             }
         }
     }
 
     // Satellite pyramids.
-    for (ox, oz) in [(-46, -46), (46, -46), (-46, 46), (46, 46)] {
-        for step in 0..8 {
-            let r = 10 - step;
+    for (ox, oz) in [(-58, -58), (58, -58), (-58, 58), (58, 58)] {
+        for step in 0..12 {
+            let r = 14 - step;
             let y = base_y + 2 + step;
             for z in -r..=r {
                 for x in -r..=r {
@@ -1551,7 +1591,7 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
         }
     }
 
-    for y in base_y + 28..=base_y + 32 {
+    for y in base_y + 62..=base_y + 72 {
         set_if_inside(chunk, cx, y, cz, Block::Yellow);
     }
 }
@@ -1638,7 +1678,7 @@ fn city_center(seed: u32) -> IVec2 {
 }
 
 #[inline]
-fn harbor_center(seed: u32) -> IVec2 {
+fn maze_center(seed: u32) -> IVec2 {
     let city = city_center(seed);
     let c = Vec2::new(city.x as f32, city.y as f32);
     let dir = if c.length_squared() > 1.0 { c.normalize() } else { Vec2::new(1.0, 0.0) };

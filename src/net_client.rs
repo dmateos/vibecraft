@@ -179,6 +179,9 @@ pub fn setup_net_client(mut state: ResMut<NetClientState>) {
     if !state.cfg.enabled {
         return;
     }
+    if state.socket.is_some() {
+        return;
+    }
     let Some(server) = state.cfg.server else {
         warn!("net client enabled without server addr");
         return;
@@ -202,10 +205,14 @@ pub fn setup_net_client(mut state: ResMut<NetClientState>) {
 pub fn setup_net_visual_assets(
     mut commands: Commands,
     state: Res<NetClientState>,
+    existing_assets: Option<Res<NetVisualAssets>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
     if !state.cfg.enabled {
+        return;
+    }
+    if existing_assets.is_some() {
         return;
     }
     let mesh = meshes.add(Mesh::from(Cuboid::from_size(Vec3::ONE)));
