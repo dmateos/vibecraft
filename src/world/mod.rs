@@ -1017,7 +1017,7 @@ fn stamp_biome_features(chunk: &mut Chunk, noise: &TerrainNoise) {
 }
 
 fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
-    const VILLAGE_CELL: i32 = 64;
+    const VILLAGE_CELL: i32 = 80;
     const VILLAGE_MARGIN: i32 = 56;
 
     let base_x = chunk.pos.x * CHUNK_SIZE as i32;
@@ -1036,12 +1036,12 @@ fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
         for cx in cell_min_x..=cell_max_x {
             let h = hash3(cx, cz, noise.seed ^ 0x51AA_92F1);
             let guaranteed_origin = cx == 0 && cz == 0;
-            if !guaranteed_origin && (h & 0xFF) < 196 {
+            if !guaranteed_origin && (h & 0xFF) < 232 {
                 continue;
             }
 
-            let vx = cx * VILLAGE_CELL + (((h >> 8) as i32 & 63) - 32);
-            let vz = cz * VILLAGE_CELL + (((h >> 16) as i32 & 63) - 32);
+            let vx = cx * VILLAGE_CELL + (((((h >> 8) as i32).rem_euclid(VILLAGE_CELL)) - (VILLAGE_CELL / 2)));
+            let vz = cz * VILLAGE_CELL + (((((h >> 16) as i32).rem_euclid(VILLAGE_CELL)) - (VILLAGE_CELL / 2)));
             if vx < min_x || vx > max_x || vz < min_z || vz > max_z {
                 continue;
             }
@@ -1075,7 +1075,7 @@ fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
 }
 
 fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) {
-    let radius = 20 + ((seed >> 28) & 3) as i32;
+    let radius = 30 + ((seed >> 27) & 7) as i32;
     flatten_village_ground(chunk, cx, ground_y, cz, radius + 6);
 
     // Main roads.
@@ -1124,8 +1124,18 @@ fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) 
         IVec2::new(14, 10),
         IVec2::new(-2, -18),
         IVec2::new(2, 18),
+        IVec2::new(-24, -8),
+        IVec2::new(-24, 8),
+        IVec2::new(24, -8),
+        IVec2::new(24, 8),
+        IVec2::new(-10, -24),
+        IVec2::new(10, -24),
+        IVec2::new(-10, 24),
+        IVec2::new(10, 24),
+        IVec2::new(-20, -18),
+        IVec2::new(20, 18),
     ];
-    let count = 6 + ((seed >> 20) & 0x3) as usize;
+    let count = 10 + ((seed >> 20) & 0x7) as usize;
     for i in 0..count.min(house_spots.len()) {
         let idx = ((i as u32 * 5 + (seed >> 5)) as usize) % house_spots.len();
         let spot = house_spots[idx];

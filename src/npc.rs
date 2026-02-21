@@ -18,10 +18,10 @@ const NPC_RADIUS: f32 = 0.28;
 const NPC_STEP_HEIGHT: f32 = 1.05;
 const NPC_GRAVITY: f32 = -22.0;
 const NPC_MAX_FALL: f32 = -30.0;
-const NPC_SPAWN_RADIUS_CHUNKS: i32 = 7;
+const NPC_SPAWN_RADIUS_CHUNKS: i32 = 6;
 const NPC_DESPAWN_RADIUS_CHUNKS: i32 = 10;
-const NPC_MAX_COUNT: usize = 28;
-const NPC_MAX_SPAWNS_PER_TICK: usize = 4;
+const NPC_MAX_COUNT: usize = 14;
+const NPC_MAX_SPAWNS_PER_TICK: usize = 2;
 const NPC_CELL_SIZE: i32 = 18;
 const FRIENDLY_INTERACT_RANGE: f32 = 4.8;
 const HOSTILE_AGGRO_RANGE: f32 = 18.0;
@@ -34,8 +34,7 @@ const FRIENDLY_VISION_DOT: f32 = -0.40;
 const HOSTILE_HEARING_RANGE: f32 = 52.0;
 const NPC_SIGHT_MEMORY: f32 = 3.0;
 const NPC_INVESTIGATE_MEMORY: f32 = 4.5;
-const CITY_SETTLEMENT_RADIUS: f32 = 116.0;
-const VILLAGE_SETTLEMENT_RADIUS: f32 = 26.0;
+const VILLAGE_SETTLEMENT_RADIUS: f32 = 40.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NpcKind {
@@ -335,10 +334,13 @@ pub fn stream_npcs_around_camera(
 
         let home = settlement_anchor_for_position(world.seed, wx, wz);
         let heading = ((seed >> 16) as f32 / u16::MAX as f32) * std::f32::consts::TAU;
-        let kind = if home.is_some() && ((seed >> 24) & 0xFF) < 205 {
+        let spawn_roll = ((seed >> 24) & 0xFF) as u8;
+        let kind = if home.is_some() {
             NpcKind::Friendly
-        } else {
+        } else if spawn_roll < 28 {
             NpcKind::Hostile
+        } else {
+            continue;
         };
         let speed = match kind {
             NpcKind::Friendly => 0.62 + ((seed >> 20) as f32 / 255.0) * 0.48,
@@ -1209,30 +1211,26 @@ fn is_solid(block: Block) -> bool {
 #[inline]
 fn should_spawn_cell(cell: IVec2, seed: u32) -> bool {
     let h = hash3(cell.x, cell.y, seed ^ 0x736E_7063);
-    (h & 0xFF) >= 182
+    (h & 0xFF) >= 214
 }
 
 fn settlement_anchor_for_position(seed: u32, x: i32, z: i32) -> Option<(Vec2, f32)> {
-    let city = city_center(seed);
-    let city_v = Vec2::new(city.x as f32, city.y as f32);
     let p = Vec2::new(x as f32, z as f32);
-    if p.distance(city_v) <= CITY_SETTLEMENT_RADIUS {
-        return Some((city_v, CITY_SETTLEMENT_RADIUS));
-    }
-
-    const VILLAGE_CELL: i32 = 64;
+    const VILLAGE_CELL: i32 = 80;
     let gx = div_floor(x, VILLAGE_CELL);
     let gz = div_floor(z, VILLAGE_CELL);
     for cz in (gz - 2)..=(gz + 2) {
         for cx in (gx - 2)..=(gx + 2) {
             let h = hash3(cx, cz, seed ^ 0x51AA_92F1);
             let guaranteed_origin = cx == 0 && cz == 0;
-            if !guaranteed_origin && (h & 0xFF) < 196 {
+            if !guaranteed_origin && (h & 0xFF) < 232 {
                 continue;
             }
 
-            let vx = cx * VILLAGE_CELL + (((h >> 8) as i32 & 63) - 32);
-            let vz = cz * VILLAGE_CELL + (((h >> 16) as i32 & 63) - 32);
+            let vx =
+                cx * VILLAGE_CELL + ((((h >> 8) as i32).rem_euclid(VILLAGE_CELL)) - (VILLAGE_CELL / 2));
+            let vz = cz * VILLAGE_CELL
+                + ((((h >> 16) as i32).rem_euclid(VILLAGE_CELL)) - (VILLAGE_CELL / 2));
             let center = Vec2::new(vx as f32, vz as f32);
             if p.distance(center) <= VILLAGE_SETTLEMENT_RADIUS {
                 return Some((center, VILLAGE_SETTLEMENT_RADIUS));
@@ -1241,30 +1239,6 @@ fn settlement_anchor_for_position(seed: u32, x: i32, z: i32) -> Option<(Vec2, f3
     }
 
     None
-}
-
-#[inline]
-fn monument_center(seed: u32) -> IVec2 {
-    let radius = 104.0 + ((seed >> 5) & 63) as f32;
-    let angle = ((seed.rotate_left(9) as f32) / (u32::MAX as f32)) * std::f32::consts::TAU;
-    IVec2::new((angle.cos() * radius).round() as i32, (angle.sin() * radius).round() as i32)
-}
-
-#[inline]
-fn city_center(seed: u32) -> IVec2 {
-    let monument = monument_center(seed);
-    let m = Vec2::new(monument.x as f32, monument.y as f32);
-    let mdir = if m.length_squared() > 1.0 {
-        m.normalize()
-    } else {
-        Vec2::new(1.0, 0.0)
-    };
-    let side = if (seed & 1) == 0 { 1.0 } else { -1.0 };
-    let perp = Vec2::new(-mdir.y, mdir.x) * side;
-    let outward = mdir * (34.0 + ((seed >> 11) & 31) as f32);
-    let lateral = perp * (152.0 + ((seed >> 7) & 31) as f32);
-    let c = m + outward + lateral;
-    IVec2::new(c.x.round() as i32, c.y.round() as i32)
 }
 
 #[inline]
