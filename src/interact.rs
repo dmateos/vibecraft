@@ -3,6 +3,7 @@ use bevy::input::mouse::MouseWheel;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
+use crate::net_client::NetClientState;
 use crate::player::{collides_player, FlyCam};
 use crate::world::{
     div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
@@ -93,6 +94,7 @@ pub fn cycle_palette_on_scroll(
 
 pub fn break_targeted_block(
     buttons: Res<ButtonInput<MouseButton>>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
@@ -100,6 +102,12 @@ pub fn break_targeted_block(
     mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+    {
+        return;
+    }
     if prompt.active {
         return;
     }
@@ -128,6 +136,7 @@ pub fn break_targeted_block(
 
 pub fn place_targeted_block(
     buttons: Res<ButtonInput<MouseButton>>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
@@ -136,6 +145,12 @@ pub fn place_targeted_block(
     mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+    {
+        return;
+    }
     if prompt.active {
         return;
     }

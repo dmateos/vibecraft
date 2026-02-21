@@ -9,19 +9,20 @@ use bevy::math::primitives::Cuboid;
 use bevy::prelude::*;
 
 use crate::interact::LocalBlockEditEvent;
-use crate::npc::{Npc, NpcKind};
+use crate::interact::PlacementPalette;
 use crate::player::FlyCam;
 use crate::world::Block;
-use crate::world::{div_floor, remesh_affected_chunks, set_block_world, LoadedChunks, VoxelWorld};
+use crate::world::{div_floor, get_block_world, remesh_affected_chunks, set_block_world, LoadedChunks, VoxelWorld};
 use vibecraft::net::protocol::{
     AckSnapshotMsg, BlockCell, BlockEditsMsg, BlockIdNet, ClientId, ClientMsg, HelloMsg, InputFrameMsg, NetEvent,
-    NpcKindNet, NpcStateNet, NpcSyncMsg, PROTOCOL_VERSION, PlayerStateNet, ServerMsg, SnapshotSeq,
+    NpcKindNet, NpcStateNet, PROTOCOL_VERSION, PlayerStateNet, ServerMsg, SnapshotSeq,
 };
 
 const NET_MAX_RECV_PER_FRAME: usize = 64;
 const NET_INPUT_SEND_MS: u64 = 100;
-const NET_NPC_SYNC_MS: u64 = 300;
 const NET_MAX_BLOCK_EDITS_PER_FRAME: usize = 96;
+const NET_BLOCK_EDITS_PER_PACKET: usize = 40;
+const NET_MAX_BLOCK_PACKETS_PER_TICK: usize = 4;
 
 #[derive(Resource, Debug, Clone)]
 pub struct NetClientConfig {
@@ -71,7 +72,6 @@ pub struct NetClientState {
     pub cfg: NetClientConfig,
     socket: Option<UdpSocket>,
     last_input_send: Instant,
-    last_npc_send: Instant,
     input_seq: u32,
     hello_sent: bool,
     pub connected: bool,
@@ -80,8 +80,14 @@ pub struct NetClientState {
     pub last_snapshot: Option<SnapshotSeq>,
     pub remote_players: Vec<PlayerStateNet>,
     pub remote_npcs: Vec<NpcStateNet>,
-    pub pending_block_edits: Vec<(ClientId, BlockCell)>,
+    pub pending_block_edits: Vec<BlockCell>,
+    pub outgoing_block_edits: Vec<BlockCell>,
     pub pending_fx: Vec<NetFxSpawn>,
+    latched_fire: bool,
+    latched_grenade: bool,
+    latched_break: bool,
+    latched_place: bool,
+    latched_place_block: Option<BlockIdNet>,
 }
 
 impl NetClientState {
@@ -90,7 +96,6 @@ impl NetClientState {
             cfg,
             socket: None,
             last_input_send: Instant::now(),
-            last_npc_send: Instant::now(),
             input_seq: 1,
             hello_sent: false,
             connected: false,
@@ -100,22 +105,25 @@ impl NetClientState {
             remote_players: Vec::new(),
             remote_npcs: Vec::new(),
             pending_block_edits: Vec::new(),
+            outgoing_block_edits: Vec::new(),
             pending_fx: Vec::new(),
+            latched_fire: false,
+            latched_grenade: false,
+            latched_break: false,
+            latched_place: false,
+            latched_place_block: None,
         }
     }
 
     pub fn is_authority(&self) -> bool {
-        self.connected
-            && self.client_id.is_some()
-            && self.authority_client_id.is_some()
-            && self.client_id == self.authority_client_id
+        !self.cfg.enabled
     }
 }
 
 #[derive(Resource, Default)]
 pub struct NetEntityMap {
     players: HashMap<ClientId, Entity>,
-    npcs: HashMap<u64, Entity>,
+    npcs: HashMap<u64, RemoteNpcBundle>,
 }
 
 #[derive(Resource)]
@@ -136,6 +144,13 @@ struct RemotePlayer {
 #[derive(Component)]
 struct RemoteNpc {
     net_id: u64,
+}
+
+#[derive(Clone, Copy)]
+struct RemoteNpcBundle {
+    root: Entity,
+    body: Entity,
+    head: Entity,
 }
 
 #[derive(Component)]
@@ -226,8 +241,9 @@ pub fn tick_net_client(
     mut state: ResMut<NetClientState>,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    palette: Res<PlacementPalette>,
     cam_q: Query<&Transform, With<FlyCam>>,
-    npc_q: Query<(&Transform, &Npc)>,
     mut local_block_edits: EventReader<LocalBlockEditEvent>,
 ) {
     if !state.cfg.enabled {
@@ -249,18 +265,37 @@ pub fn tick_net_client(
         state.hello_sent = true;
     }
 
-    // local block edits -> server
-    let mut edits = Vec::new();
-    for e in local_block_edits.read() {
-        edits.push(BlockCell {
-            x: e.x,
-            y: e.y,
-            z: e.z,
-            block: block_to_net(e.block),
-        });
+    // local block edits -> server (only for offline fallback/testing)
+    if !state.connected {
+        for e in local_block_edits.read() {
+            state.outgoing_block_edits.push(BlockCell {
+                x: e.x,
+                y: e.y,
+                z: e.z,
+                block: block_to_net(e.block),
+            });
+        }
+    } else {
+        local_block_edits.clear();
     }
-    if !edits.is_empty() {
+    let mut packets_sent = 0usize;
+    while !state.outgoing_block_edits.is_empty() && packets_sent < NET_MAX_BLOCK_PACKETS_PER_TICK {
+        let take = state
+            .outgoing_block_edits
+            .len()
+            .min(NET_BLOCK_EDITS_PER_PACKET);
+        let edits = state.outgoing_block_edits.drain(..take).collect();
         send(&sock, server, &ClientMsg::BlockEdits(BlockEditsMsg { edits }));
+        packets_sent += 1;
+    }
+
+    // Latch one-shot gameplay intents every frame so 10Hz send loop doesn't drop clicks/presses.
+    state.latched_fire |= keys.just_pressed(KeyCode::KeyZ);
+    state.latched_grenade |= keys.just_pressed(KeyCode::KeyQ);
+    state.latched_break |= buttons.just_pressed(MouseButton::Left);
+    state.latched_place |= buttons.just_pressed(MouseButton::Right);
+    if state.latched_place_block.is_none() || state.latched_place {
+        state.latched_place_block = Some(block_to_net(palette.selected_block()));
     }
 
     // incoming
@@ -299,7 +334,7 @@ pub fn tick_net_client(
             }
             ServerMsg::Snapshot(s) => {
                 state.last_snapshot = Some(s.snapshot_seq);
-                state.authority_client_id = s.players.iter().map(|p| p.client_id).min();
+                state.authority_client_id = None;
                 state.remote_players = s.players;
                 state.remote_npcs = s.npcs;
                 let ack = ClientMsg::AckSnapshot(AckSnapshotMsg {
@@ -317,10 +352,9 @@ pub fn tick_net_client(
                             z,
                             block,
                         } => {
-                            state.pending_block_edits.push((
-                                source_client,
-                                BlockCell { x, y, z, block },
-                            ));
+                            if state.client_id != Some(source_client) {
+                                state.pending_block_edits.push(BlockCell { x, y, z, block });
+                            }
                         }
                         NetEvent::GunFired {
                             shooter_entity,
@@ -343,6 +377,9 @@ pub fn tick_net_client(
                     }
                 }
             }
+            ServerMsg::ChunkDelta(delta) => {
+                state.pending_block_edits.extend(delta.edits);
+            }
             ServerMsg::ServerNotice(n) => {
                 warn!("server notice {:?}: {}", n.code, n.message);
             }
@@ -364,42 +401,26 @@ pub fn tick_net_client(
             move_z,
             jump_pressed: keys.pressed(KeyCode::Space),
             sprint_pressed: keys.pressed(KeyCode::ControlLeft),
-            fire_pressed: keys.just_pressed(KeyCode::KeyZ),
-            grenade_pressed: keys.just_pressed(KeyCode::KeyQ),
-            break_pressed: false,
-            place_pressed: false,
+            fire_pressed: state.latched_fire,
+            grenade_pressed: state.latched_grenade,
+            break_pressed: state.latched_break,
+            place_pressed: state.latched_place,
+            place_block: state.latched_place_block,
             look_yaw: 0.0,
             look_pitch: 0.0,
             view_origin: [cam.translation.x, cam.translation.y, cam.translation.z],
             view_dir: [view_dir.x, view_dir.y, view_dir.z],
         });
         send(&sock, server, &input);
+        state.latched_fire = false;
+        state.latched_grenade = false;
+        state.latched_break = false;
+        state.latched_place = false;
+        state.latched_place_block = None;
         state.input_seq = state.input_seq.wrapping_add(1);
         state.last_input_send = Instant::now();
     }
 
-    // NPC authority publish
-    if state.connected
-        && state.is_authority()
-        && state.last_npc_send.elapsed() >= Duration::from_millis(NET_NPC_SYNC_MS)
-    {
-        let npcs = npc_q
-            .iter()
-            .map(|(t, npc)| NpcStateNet {
-                entity_id: npc_net_id(npc.cell),
-                pos: [t.translation.x, t.translation.y, t.translation.z],
-                yaw: npc.heading,
-                kind: match npc.kind {
-                    NpcKind::Friendly => NpcKindNet::Friendly,
-                    NpcKind::Hostile => NpcKindNet::Hostile,
-                },
-                hp: npc.health,
-                dead: npc.dead,
-            })
-            .collect();
-        send(&sock, server, &ClientMsg::NpcSync(NpcSyncMsg { npcs }));
-        state.last_npc_send = Instant::now();
-    }
     state.socket = Some(sock);
 }
 
@@ -412,13 +433,12 @@ pub fn apply_remote_block_edits(
     if !state.cfg.enabled || state.pending_block_edits.is_empty() {
         return;
     }
-    let my_id = state.client_id;
     let mut edits = std::mem::take(&mut state.pending_block_edits);
     let overflow = edits.split_off(edits.len().min(NET_MAX_BLOCK_EDITS_PER_FRAME));
     state.pending_block_edits = overflow;
     let mut touched_chunks = HashSet::new();
-    for (source_client, e) in edits {
-        if my_id == Some(source_client) {
+    for e in edits {
+        if get_block_world(&world.chunks, e.x, e.y, e.z) == block_from_net(e.block) {
             continue;
         }
         if set_block_world(
@@ -582,8 +602,8 @@ pub fn sync_remote_entities(
     let mut keep_npcs = HashSet::new();
     for n in &state.remote_npcs {
         keep_npcs.insert(n.entity_id);
-        if let Some(e) = map.npcs.get(&n.entity_id).copied() {
-            if let Ok(mut t) = transforms.get_mut(e) {
+        if let Some(bundle) = map.npcs.get(&n.entity_id).copied() {
+            if let Ok(mut t) = transforms.get_mut(bundle.root) {
                 t.translation = Vec3::new(n.pos[0], n.pos[1], n.pos[2]);
                 let yaw = -n.yaw + std::f32::consts::FRAC_PI_2;
                 t.rotation = Quat::from_rotation_y(yaw);
@@ -591,31 +611,81 @@ pub fn sync_remote_entities(
                     t.rotation *= Quat::from_rotation_z(1.15);
                 }
             }
+            let body_scale = match n.kind {
+                NpcKindNet::Friendly => Vec3::new(0.58, 0.86, 0.34),
+                NpcKindNet::Hostile => Vec3::new(0.84, 0.52, 1.02),
+            };
+            let head_scale = match n.kind {
+                NpcKindNet::Friendly => Vec3::new(0.34, 0.34, 0.34),
+                NpcKindNet::Hostile => Vec3::new(0.42, 0.30, 0.50),
+            };
+            let head_pos = match n.kind {
+                NpcKindNet::Friendly => Vec3::new(0.0, 1.44, 0.0),
+                NpcKindNet::Hostile => Vec3::new(0.0, 0.90, -0.38),
+            };
+            if let Ok(mut t) = transforms.get_mut(bundle.body) {
+                t.scale = body_scale;
+            }
+            if let Ok(mut t) = transforms.get_mut(bundle.head) {
+                t.translation = head_pos;
+                t.scale = head_scale;
+            }
         } else {
             let mat = match n.kind {
                 NpcKindNet::Friendly => assets.npc_friendly_mat.clone(),
                 NpcKindNet::Hostile => assets.npc_hostile_mat.clone(),
             };
-            let mut transform = Transform {
-                translation: Vec3::new(n.pos[0], n.pos[1], n.pos[2]),
-                scale: Vec3::new(0.58, 1.22, 0.50),
-                ..default()
-            };
+            let mut transform = Transform::from_translation(Vec3::new(n.pos[0], n.pos[1], n.pos[2]));
             if n.dead {
                 transform.rotation = Quat::from_rotation_z(1.15);
             }
-            let e = commands
+            let root = commands
+                .spawn((SpatialBundle { transform, ..default() }, RemoteNpc { net_id: n.entity_id }))
+                .id();
+            let body = commands
                 .spawn((
                     PbrBundle {
                         mesh: assets.mesh.clone(),
-                        material: mat,
-                        transform,
+                        material: mat.clone(),
+                        transform: Transform {
+                            translation: Vec3::new(0.0, 0.92, 0.0),
+                            scale: match n.kind {
+                                NpcKindNet::Friendly => Vec3::new(0.58, 0.86, 0.34),
+                                NpcKindNet::Hostile => Vec3::new(0.84, 0.52, 1.02),
+                            },
+                            ..default()
+                        },
                         ..default()
                     },
-                    RemoteNpc { net_id: n.entity_id },
                 ))
                 .id();
-            map.npcs.insert(n.entity_id, e);
+            let head = commands
+                .spawn(PbrBundle {
+                    mesh: assets.mesh.clone(),
+                    material: mat,
+                    transform: Transform {
+                        translation: match n.kind {
+                            NpcKindNet::Friendly => Vec3::new(0.0, 1.44, 0.0),
+                            NpcKindNet::Hostile => Vec3::new(0.0, 0.90, -0.38),
+                        },
+                        scale: match n.kind {
+                            NpcKindNet::Friendly => Vec3::new(0.34, 0.34, 0.34),
+                            NpcKindNet::Hostile => Vec3::new(0.42, 0.30, 0.50),
+                        },
+                        ..default()
+                    },
+                    ..default()
+                })
+                .id();
+            commands.entity(root).add_child(body).add_child(head);
+            map.npcs.insert(
+                n.entity_id,
+                RemoteNpcBundle {
+                    root,
+                    body,
+                    head,
+                },
+            );
         }
     }
     let stale_npcs: Vec<u64> = map
@@ -625,8 +695,8 @@ pub fn sync_remote_entities(
         .filter(|id| !keep_npcs.contains(id))
         .collect();
     for id in stale_npcs {
-        if let Some(e) = map.npcs.remove(&id) {
-            commands.entity(e).despawn_recursive();
+        if let Some(bundle) = map.npcs.remove(&id) {
+            commands.entity(bundle.root).despawn_recursive();
         }
     }
 }
@@ -640,12 +710,6 @@ fn send(sock: &UdpSocket, server: SocketAddr, msg: &ClientMsg) {
         }
         Err(e) => warn!("net serialize error: {e}"),
     }
-}
-
-fn npc_net_id(cell: IVec2) -> u64 {
-    let x = cell.x as u32 as u64;
-    let z = cell.y as u32 as u64;
-    (x << 32) | z
 }
 
 fn block_to_net(block: Block) -> BlockIdNet {
