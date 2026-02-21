@@ -1,3 +1,4 @@
+//! NPC spawning, AI behavior, interaction, and debug visualization.
 use std::collections::{HashMap, HashSet};
 
 use bevy::math::primitives::Cuboid;

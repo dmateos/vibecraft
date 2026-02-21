@@ -1,3 +1,4 @@
+//! Gun, bullets, grenades, explosions, and chunk-remesh work queue logic.
 use std::collections::{HashSet, VecDeque};
 
 use bevy::math::primitives::Cuboid;

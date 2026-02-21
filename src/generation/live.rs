@@ -1,3 +1,4 @@
+//! Live LLM-driven generation request flow and prompt integration.
 use std::env;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Mutex;

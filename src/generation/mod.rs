@@ -1,3 +1,4 @@
+//! Generation module root for schema, planning, validation, and execution.
 mod compiler;
 mod executor;
 mod live;

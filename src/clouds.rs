@@ -1,3 +1,4 @@
+//! Cloud mesh streaming, rendering, and animation systems.
 use std::collections::{HashMap, HashSet};
 
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};

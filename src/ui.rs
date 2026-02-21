@@ -1,3 +1,4 @@
+//! Crosshair and HUD/debug overlay UI spawning and updates.
 use bevy::prelude::*;
 use std::collections::VecDeque;
 

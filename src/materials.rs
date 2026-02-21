@@ -1,3 +1,4 @@
+//! Custom terrain material definitions and shader parameter bindings.
 #![allow(dead_code)]
 
 use bevy::pbr::Material;

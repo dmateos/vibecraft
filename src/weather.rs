@@ -1,3 +1,4 @@
+//! Day-night and weather state blending applied to scene materials/lights.
 use bevy::prelude::*;
 
 use crate::clouds::CloudMaterial;

@@ -1,3 +1,4 @@
+//! High-level plan construction utilities for world generation tasks.
 use crate::generation::schema::{GenerationOp, GenerationRequest};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

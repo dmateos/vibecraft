@@ -1,3 +1,4 @@
+//! Sky dome/disc setup and day-night sky updates.
 use bevy::math::primitives::{Cuboid, Sphere};
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;

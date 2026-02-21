@@ -1,3 +1,4 @@
+//! Validation rules that sanitize/accept generation plans.
 use crate::generation::schema::{GenerationOp, GenerationRequest};
 
 pub fn validate_request(req: &GenerationRequest) -> Result<(), String> {

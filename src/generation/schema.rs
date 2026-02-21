@@ -1,3 +1,4 @@
+//! Data schema for generation plans, edits, and request payloads.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+//! Wire protocol message types for client/server communication.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};

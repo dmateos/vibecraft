@@ -1,3 +1,4 @@
+//! Global gameplay and world constants used across systems.
 pub const CHUNK_SIZE: usize = 32;
 pub const WORLD_HEIGHT: usize = 192;
 pub const VIEW_DISTANCE_CHUNKS: i32 = 20;

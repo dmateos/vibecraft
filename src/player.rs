@@ -1,3 +1,4 @@
+//! First-person camera look, movement, collision, and fly mode control.
 use std::collections::HashMap;
 
 use bevy::input::mouse::MouseMotion;

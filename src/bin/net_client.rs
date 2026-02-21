@@ -1,3 +1,4 @@
+//! Minimal CLI network client for protocol smoke testing.
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::thread;

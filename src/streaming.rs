@@ -1,3 +1,4 @@
+//! Chunk streaming and generation/meshing orchestration around the camera.
 use std::collections::HashSet;
 
 use bevy::prelude::*;

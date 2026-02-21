@@ -1,3 +1,4 @@
+//! Voxel world data structures, terrain generation, landmarks, and chunk meshing.
 use std::collections::HashMap;
 
 use bevy::prelude::*;
@@ -173,10 +174,14 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
     }
 
     stamp_trees(&mut chunk, &noise);
+    stamp_dense_forest(&mut chunk, &noise);
     stamp_biome_features(&mut chunk, &noise);
     stamp_villages(&mut chunk, &noise);
     stamp_grand_monument(&mut chunk, &noise);
     stamp_megacity(&mut chunk, &noise);
+    stamp_harbor(&mut chunk, &noise);
+    stamp_desert_pyramid(&mut chunk, &noise);
+    stamp_observatory(&mut chunk, &noise);
     chunk
 }
 
@@ -876,6 +881,75 @@ fn stamp_trees(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 }
 
+fn stamp_dense_forest(chunk: &mut Chunk, noise: &TerrainNoise) {
+    const GROVE_CELL: i32 = 14;
+    const GROVE_MARGIN: i32 = 10;
+
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let min_x = base_x - GROVE_MARGIN;
+    let max_x = base_x + CHUNK_SIZE as i32 - 1 + GROVE_MARGIN;
+    let min_z = base_z - GROVE_MARGIN;
+    let max_z = base_z + CHUNK_SIZE as i32 - 1 + GROVE_MARGIN;
+
+    let cell_min_x = div_floor(min_x, GROVE_CELL);
+    let cell_max_x = div_floor(max_x, GROVE_CELL);
+    let cell_min_z = div_floor(min_z, GROVE_CELL);
+    let cell_max_z = div_floor(max_z, GROVE_CELL);
+
+    for cz in cell_min_z..=cell_max_z {
+        for cx in cell_min_x..=cell_max_x {
+            let h = hash3(cx, cz, noise.seed ^ 0x7D31_A4E2);
+            let roll = (h & 0xFF) as i32;
+            if roll < 156 {
+                continue;
+            }
+
+            let gx = cx * GROVE_CELL + (((h >> 8) as i32 & 13) - 6);
+            let gz = cz * GROVE_CELL + (((h >> 16) as i32 & 13) - 6);
+            if gx < min_x || gx > max_x || gz < min_z || gz > max_z {
+                continue;
+            }
+
+            let center = sample_surface(noise, gx, gz);
+            if center.biome != BiomeKind::Forest {
+                continue;
+            }
+            if center.height as i32 <= SEA_LEVEL + 3 || center.ridge.abs() > 0.55 {
+                continue;
+            }
+            let moisture = noise
+                .perlin_moisture
+                .get([gx as f64 * 0.0022 + 121.3, gz as f64 * 0.0022 - 87.1]) as f32;
+            if moisture < 0.30 {
+                continue;
+            }
+
+            let trees = 3 + ((h >> 24) as i32 & 0x3);
+            for i in 0..trees {
+                let th = hash3(gx + i * 7, gz - i * 11, noise.seed ^ 0xA17C_22D1);
+                let ox = (((th >> 4) as i32 & 7) - 3).clamp(-3, 3);
+                let oz = (((th >> 12) as i32 & 7) - 3).clamp(-3, 3);
+                let tx = gx + ox;
+                let tz = gz + oz;
+                if tx < min_x || tx > max_x || tz < min_z || tz > max_z {
+                    continue;
+                }
+
+                let s = sample_surface(noise, tx, tz);
+                let sy = s.height as i32;
+                if s.biome != BiomeKind::Forest || sy <= SEA_LEVEL + 2 || s.ridge.abs() > 0.60 {
+                    continue;
+                }
+
+                let kind = if (th & 3) == 0 { TreeKind::Pine } else { TreeKind::Oak };
+                let local_seed = hash3(tx, tz, noise.seed ^ 0x54DA_88E9);
+                place_tree(chunk, tx, sy + 1, tz, kind, local_seed);
+            }
+        }
+    }
+}
+
 fn stamp_biome_features(chunk: &mut Chunk, noise: &TerrainNoise) {
     const FEATURE_CELL: i32 = 10;
     const FEATURE_MARGIN: i32 = 7;
@@ -1337,6 +1411,203 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 }
 
+fn stamp_harbor(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = harbor_center(noise.seed);
+    let cx = center.x;
+    let cz = center.y;
+    let influence = 96;
+
+    let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
+    let chunk_min_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let chunk_max_z = chunk_min_z + CHUNK_SIZE as i32 - 1;
+    if cx + influence < chunk_min_x
+        || cx - influence > chunk_max_x
+        || cz + influence < chunk_min_z
+        || cz - influence > chunk_max_z
+    {
+        return;
+    }
+
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 2, SEA_LEVEL + 7);
+    flatten_village_ground(chunk, cx, base_y, cz, influence);
+
+    // Stone quay + dock roads.
+    for z in -78_i32..=78_i32 {
+        for x in -78_i32..=78_i32 {
+            if x.abs() <= 42 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+            } else if z.abs() <= 4 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
+            }
+        }
+    }
+
+    // Water basin.
+    for z in -66..=66 {
+        for x in -34..=34 {
+            for y in (base_y - 3)..=base_y {
+                set_if_inside(chunk, cx + x, y, cz + z, Block::Air);
+            }
+        }
+    }
+
+    // Piers.
+    for pier_z in (-54..=54).step_by(18) {
+        for z in pier_z - 2..=pier_z + 2 {
+            for x in 34..=64 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Wood);
+            }
+            for x in -64..=-34 {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Wood);
+            }
+        }
+    }
+
+    // Warehouse row.
+    for (i, wx) in [-70, -54, 54, 70].into_iter().enumerate() {
+        let hz = if i < 2 { -62 } else { 62 };
+        place_house(
+            chunk,
+            cx + wx,
+            base_y + 2,
+            cz + hz,
+            5,
+            4,
+            5 + (i as i32 % 2),
+            hash3(wx, hz, noise.seed ^ 0xAA01_BC9D),
+        );
+    }
+
+    for y in base_y + 2..=base_y + 6 {
+        set_if_inside(chunk, cx, y, cz, Block::Cyan);
+    }
+}
+
+fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = pyramid_center(noise.seed);
+    let cx = center.x;
+    let cz = center.y;
+    let influence = 84;
+
+    let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
+    let chunk_min_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let chunk_max_z = chunk_min_z + CHUNK_SIZE as i32 - 1;
+    if cx + influence < chunk_min_x
+        || cx - influence > chunk_max_x
+        || cz + influence < chunk_min_z
+        || cz - influence > chunk_max_z
+    {
+        return;
+    }
+
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 4, WORLD_HEIGHT as i32 - 60);
+    flatten_village_ground(chunk, cx, base_y, cz, influence);
+
+    // Courtyard.
+    for z in -54_i32..=54_i32 {
+        for x in -54_i32..=54_i32 {
+            let mat = if (x + z).abs() % 5 == 0 { Block::Stone } else { Block::Sand };
+            set_if_inside(chunk, cx + x, base_y + 1, cz + z, mat);
+        }
+    }
+
+    // Main stepped pyramid.
+    for step in 0..18 {
+        let r = 34 - step * 2;
+        let y = base_y + 2 + step;
+        for z in -r..=r {
+            for x in -r..=r {
+                set_if_inside(chunk, cx + x, y, cz + z, Block::Sand);
+            }
+        }
+    }
+
+    // Hollow entry chamber.
+    for y in base_y + 3..=base_y + 12 {
+        for z in -3..=3 {
+            for x in -4..=4 {
+                set_if_inside(chunk, cx + x, y, cz - 34 + z, Block::Air);
+            }
+        }
+    }
+
+    // Satellite pyramids.
+    for (ox, oz) in [(-46, -46), (46, -46), (-46, 46), (46, 46)] {
+        for step in 0..8 {
+            let r = 10 - step;
+            let y = base_y + 2 + step;
+            for z in -r..=r {
+                for x in -r..=r {
+                    set_if_inside(chunk, cx + ox + x, y, cz + oz + z, Block::Sand);
+                }
+            }
+        }
+    }
+
+    for y in base_y + 21..=base_y + 24 {
+        set_if_inside(chunk, cx, y, cz, Block::Yellow);
+    }
+}
+
+fn stamp_observatory(chunk: &mut Chunk, noise: &TerrainNoise) {
+    let center = observatory_center(noise.seed);
+    let cx = center.x;
+    let cz = center.y;
+    let influence = 66;
+
+    let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
+    let chunk_min_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let chunk_max_z = chunk_min_z + CHUNK_SIZE as i32 - 1;
+    if cx + influence < chunk_min_x
+        || cx - influence > chunk_max_x
+        || cz + influence < chunk_min_z
+        || cz - influence > chunk_max_z
+    {
+        return;
+    }
+
+    let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 14, WORLD_HEIGHT as i32 - 44);
+    flatten_village_ground(chunk, cx, base_y, cz, influence);
+
+    // Terraced hill pad.
+    for r in [30, 24, 18] {
+        for z in -r..=r {
+            for x in -r..=r {
+                if x * x + z * z <= r * r {
+                    set_if_inside(chunk, cx + x, base_y + (30 - r) / 6, cz + z, Block::Stone);
+                }
+            }
+        }
+    }
+
+    // Main tower body.
+    place_round_tower(chunk, cx, base_y + 2, cz, 8, 16);
+
+    // Dome cap.
+    let dome_base = base_y + 19;
+    for y in dome_base..=dome_base + 8 {
+        let dy = y - dome_base;
+        let r = (8 - dy / 2).max(2);
+        for z in -r..=r {
+            for x in -r..=r {
+                if x * x + z * z <= r * r {
+                    set_if_inside(chunk, cx + x, y, cz + z, Block::Cyan);
+                }
+            }
+        }
+    }
+
+    // Causeway.
+    for z in -4..=4 {
+        for x in -66..=-8 {
+            set_if_inside(chunk, cx + x, base_y + 2, cz + z, Block::Stone);
+        }
+    }
+}
+
 #[inline]
 fn monument_center(seed: u32) -> IVec2 {
     let radius = 104.0 + ((seed >> 5) & 63) as f32;
@@ -1355,10 +1626,40 @@ fn city_center(seed: u32) -> IVec2 {
     };
     let side = if (seed & 1) == 0 { 1.0 } else { -1.0 };
     let perp = Vec2::new(-mdir.y, mdir.x) * side;
-    let outward = mdir * (34.0 + ((seed >> 11) & 31) as f32);
-    let lateral = perp * (152.0 + ((seed >> 7) & 31) as f32);
+    let outward = mdir * (46.0 + ((seed >> 11) & 31) as f32);
+    let lateral = perp * (196.0 + ((seed >> 7) & 47) as f32);
     let c = m + outward + lateral;
     IVec2::new(c.x.round() as i32, c.y.round() as i32)
+}
+
+#[inline]
+fn harbor_center(seed: u32) -> IVec2 {
+    let city = city_center(seed);
+    let c = Vec2::new(city.x as f32, city.y as f32);
+    let dir = if c.length_squared() > 1.0 { c.normalize() } else { Vec2::new(1.0, 0.0) };
+    let perp = Vec2::new(-dir.y, dir.x) * if (seed & 2) == 0 { 1.0 } else { -1.0 };
+    let p = c + perp * (170.0 + ((seed >> 3) & 31) as f32) - dir * 52.0;
+    IVec2::new(p.x.round() as i32, p.y.round() as i32)
+}
+
+#[inline]
+fn pyramid_center(seed: u32) -> IVec2 {
+    let monument = monument_center(seed);
+    let m = Vec2::new(monument.x as f32, monument.y as f32);
+    let dir = if m.length_squared() > 1.0 { m.normalize() } else { Vec2::new(1.0, 0.0) };
+    let p = m * (1.0 + (140.0 + ((seed >> 13) & 63) as f32) / m.length().max(1.0));
+    let q = p + Vec2::new(-dir.y, dir.x) * (40.0 + ((seed >> 19) & 31) as f32);
+    IVec2::new(q.x.round() as i32, q.y.round() as i32)
+}
+
+#[inline]
+fn observatory_center(seed: u32) -> IVec2 {
+    let city = city_center(seed);
+    let c = Vec2::new(city.x as f32, city.y as f32);
+    let dir = if c.length_squared() > 1.0 { c.normalize() } else { Vec2::new(1.0, 0.0) };
+    let perp = Vec2::new(dir.y, -dir.x);
+    let p = c + dir * (128.0 + ((seed >> 17) & 63) as f32) + perp * (52.0 + ((seed >> 21) & 31) as f32);
+    IVec2::new(p.x.round() as i32, p.y.round() as i32)
 }
 
 fn place_round_tower(chunk: &mut Chunk, cx: i32, base_y: i32, cz: i32, radius: i32, height: i32) {

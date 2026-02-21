@@ -1,3 +1,4 @@
+//! Network-facing ID/entity mapping utilities for simulation sync.
 use crate::net::protocol::{BlockCell, BlockIdNet};
 use crate::world::Block;
 

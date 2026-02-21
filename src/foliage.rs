@@ -1,3 +1,4 @@
+//! Foliage streaming/animation scaffolding and material setup.
 use std::collections::{HashMap, HashSet};
 
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};

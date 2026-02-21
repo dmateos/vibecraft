@@ -1,3 +1,4 @@
+//! Block targeting, break/place input handling, and placement palette state.
 use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
 use bevy::input::{ButtonState, mouse::MouseButtonInput};

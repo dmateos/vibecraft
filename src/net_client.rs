@@ -1,3 +1,4 @@
+//! Client-side networking state sync, remote entities, and net effects.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};

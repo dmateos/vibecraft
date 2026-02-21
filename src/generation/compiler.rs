@@ -1,3 +1,4 @@
+//! Compilation of generation intents into concrete voxel edit batches.
 use std::collections::HashSet;
 
 use bevy::prelude::*;

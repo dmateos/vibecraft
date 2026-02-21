@@ -1,3 +1,4 @@
+//! Headless UDP test server for multiplayer scaffold snapshots/events.
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};

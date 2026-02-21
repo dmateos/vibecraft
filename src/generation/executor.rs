@@ -1,3 +1,4 @@
+//! Applies validated generation plans to world chunks and remesh paths.
 use std::collections::{HashSet, VecDeque};
 
 use bevy::prelude::*;

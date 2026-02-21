@@ -1,3 +1,4 @@
+//! Entry point for the local VibeCraft client app and system wiring.
 mod clouds;
 mod config;
 mod generation;

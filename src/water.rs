@@ -1,3 +1,4 @@
+//! Water rendering and optional water-flow simulation systems.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
