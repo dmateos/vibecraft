@@ -100,6 +100,7 @@ fn main() {
                 generation::initialize_prompt_input,
                 ui::spawn_crosshair,
                 ui::spawn_hud,
+                ui::spawn_hotbar,
             ),
         )
         .add_systems(
@@ -171,6 +172,7 @@ fn main() {
                 ui::toggle_debug_overlay,
                 ui::sample_frame_stats,
                 ui::update_hud_text,
+                ui::update_hotbar_ui,
                 ui::update_debug_hud_text,
             ),
         );

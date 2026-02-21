@@ -107,6 +107,9 @@ impl PlacementPalette {
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
+    pub fn entry(&self, index: usize) -> Option<(Block, &'static str)> {
+        self.blocks.get(index).copied()
+    }
 }
 
 pub fn cycle_palette_on_scroll(

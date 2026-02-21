@@ -17,6 +17,11 @@ pub(crate) struct HudText;
 #[derive(Component)]
 pub(crate) struct DebugHudText;
 
+#[derive(Component)]
+pub(crate) struct HotbarSlot {
+    index: usize,
+}
+
 #[derive(Resource, Default)]
 pub struct DebugOverlayState {
     pub visible: bool,
@@ -122,6 +127,85 @@ pub fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
+pub fn spawn_hotbar(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    palette: Res<PlacementPalette>,
+    inv: Res<BlockInventory>,
+) {
+    let font = asset_server.load("fonts/DebugSans.ttf");
+    commands
+        .spawn(NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(18.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-430.0)),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(6.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|parent| {
+            for index in 0..palette.len() {
+                let (block, name) = palette
+                    .entry(index)
+                    .expect("hotbar index should always be valid");
+                let count = inv.count(block);
+                let selected = index == palette.selected_index();
+                parent.spawn((
+                    TextBundle {
+                        background_color: BackgroundColor(if selected {
+                            Color::srgba(0.34, 0.38, 0.44, 0.90)
+                        } else {
+                            Color::srgba(0.07, 0.09, 0.12, 0.78)
+                        }),
+                        ..TextBundle::from_section(
+                            format!("{}\n{}", short_name(name), count),
+                            TextStyle {
+                                font: font.clone(),
+                                font_size: 14.0,
+                                color: Color::srgba(0.96, 0.97, 0.99, 0.96),
+                            },
+                        )
+                        .with_style(Style {
+                            width: Val::Px(72.0),
+                            height: Val::Px(52.0),
+                            padding: UiRect::all(Val::Px(6.0)),
+                            ..default()
+                        })
+                    },
+                    HotbarSlot { index },
+                ));
+            }
+        });
+}
+
+pub fn update_hotbar_ui(
+    palette: Res<PlacementPalette>,
+    inv: Res<BlockInventory>,
+    mut q: Query<(&HotbarSlot, &mut Text, &mut BackgroundColor)>,
+) {
+    if !palette.is_changed() && !inv.is_changed() {
+        return;
+    }
+
+    for (slot, mut text, mut bg) in &mut q {
+        let Some((block, name)) = palette.entry(slot.index) else {
+            continue;
+        };
+        let count = inv.count(block);
+        text.sections[0].value = format!("{}\n{}", short_name(name), count);
+        if slot.index == palette.selected_index() {
+            *bg = BackgroundColor(Color::srgba(0.34, 0.38, 0.44, 0.90));
+        } else {
+            *bg = BackgroundColor(Color::srgba(0.07, 0.09, 0.12, 0.78));
+        }
+    }
+}
+
 pub fn update_hud_text(
     palette: Res<PlacementPalette>,
     inv: Res<BlockInventory>,
@@ -153,6 +237,10 @@ pub fn update_hud_text(
         selected_count,
         npc_ui.message,
     );
+}
+
+fn short_name(name: &str) -> String {
+    name.chars().take(6).collect()
 }
 
 pub fn toggle_debug_overlay(
