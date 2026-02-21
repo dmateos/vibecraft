@@ -88,6 +88,9 @@ pub struct NetClientState {
     latched_break: bool,
     latched_place: bool,
     latched_place_block: Option<BlockIdNet>,
+    latched_fire_cell: Option<[i32; 3]>,
+    latched_break_cell: Option<[i32; 3]>,
+    latched_place_cell: Option<[i32; 3]>,
 }
 
 impl NetClientState {
@@ -112,6 +115,9 @@ impl NetClientState {
             latched_break: false,
             latched_place: false,
             latched_place_block: None,
+            latched_fire_cell: None,
+            latched_break_cell: None,
+            latched_place_cell: None,
         }
     }
 
@@ -244,6 +250,7 @@ pub fn tick_net_client(
     buttons: Res<ButtonInput<MouseButton>>,
     palette: Res<PlacementPalette>,
     cam_q: Query<&Transform, With<FlyCam>>,
+    world: Res<VoxelWorld>,
     mut local_block_edits: EventReader<LocalBlockEditEvent>,
 ) {
     if !state.cfg.enabled {
@@ -290,12 +297,31 @@ pub fn tick_net_client(
     }
 
     // Latch one-shot gameplay intents every frame so 10Hz send loop doesn't drop clicks/presses.
-    state.latched_fire |= keys.just_pressed(KeyCode::KeyZ);
+    if keys.just_pressed(KeyCode::KeyZ) {
+        state.latched_fire = true;
+        if let Ok(cam) = cam_q.get_single()
+            && let Some((solid, _)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH * 2.3)
+        {
+            state.latched_fire_cell = Some([solid.x, solid.y, solid.z]);
+        }
+    }
     state.latched_grenade |= keys.just_pressed(KeyCode::KeyQ);
-    state.latched_break |= buttons.just_pressed(MouseButton::Left);
-    state.latched_place |= buttons.just_pressed(MouseButton::Right);
-    if state.latched_place_block.is_none() || state.latched_place {
+    if buttons.just_pressed(MouseButton::Left) {
+        state.latched_break = true;
+        if let Ok(cam) = cam_q.get_single()
+            && let Some((solid, _)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH)
+        {
+            state.latched_break_cell = Some([solid.x, solid.y, solid.z]);
+        }
+    }
+    if buttons.just_pressed(MouseButton::Right) {
+        state.latched_place = true;
         state.latched_place_block = Some(block_to_net(palette.selected_block()));
+        if let Ok(cam) = cam_q.get_single()
+            && let Some((_solid, prev)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH)
+        {
+            state.latched_place_cell = Some([prev.x, prev.y, prev.z]);
+        }
     }
 
     // incoming
@@ -406,6 +432,9 @@ pub fn tick_net_client(
             break_pressed: state.latched_break,
             place_pressed: state.latched_place,
             place_block: state.latched_place_block,
+            fire_cell: state.latched_fire_cell,
+            break_cell: state.latched_break_cell,
+            place_cell: state.latched_place_cell,
             look_yaw: 0.0,
             look_pitch: 0.0,
             view_origin: [cam.translation.x, cam.translation.y, cam.translation.z],
@@ -417,6 +446,9 @@ pub fn tick_net_client(
         state.latched_break = false;
         state.latched_place = false;
         state.latched_place_block = None;
+        state.latched_fire_cell = None;
+        state.latched_break_cell = None;
+        state.latched_place_cell = None;
         state.input_seq = state.input_seq.wrapping_add(1);
         state.last_input_send = Instant::now();
     }
@@ -746,4 +778,37 @@ fn block_from_net(block: BlockIdNet) -> Block {
         BlockIdNet::Purple => Block::Purple,
         BlockIdNet::Cyan => Block::Cyan,
     }
+}
+
+fn raycast_target(
+    origin: Vec3,
+    dir: Vec3,
+    chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
+    max_dist: f32,
+) -> Option<(IVec3, IVec3)> {
+    let step = 0.05;
+    let mut t = 0.0;
+    let mut last_cell = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
+    let mut last_air = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
+
+    while t <= max_dist {
+        let p = origin + dir * t;
+        let cell = IVec3::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        if cell == last_cell {
+            t += step;
+            continue;
+        }
+        last_cell = cell;
+
+        if get_block_world(chunks, cell.x, cell.y, cell.z) == Block::Air {
+            last_air = cell;
+            t += step;
+            continue;
+        }
+        if last_air.x == i32::MIN {
+            return None;
+        }
+        return Some((cell, last_air));
+    }
+    None
 }
