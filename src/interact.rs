@@ -19,6 +19,48 @@ pub struct LocalBlockEditEvent {
     pub block: Block,
 }
 
+#[derive(Resource)]
+pub struct BlockInventory {
+    counts: std::collections::HashMap<Block, u32>,
+}
+
+impl Default for BlockInventory {
+    fn default() -> Self {
+        use Block::*;
+        let mut counts = std::collections::HashMap::new();
+        for b in [Stone, Dirt, Grass, Sand, Wood, Leaves, Red, Blue, Yellow, Purple, Cyan] {
+            counts.insert(b, 0);
+        }
+        Self { counts }
+    }
+}
+
+impl BlockInventory {
+    pub fn count(&self, block: Block) -> u32 {
+        self.counts.get(&block).copied().unwrap_or(0)
+    }
+
+    pub fn add(&mut self, block: Block, amount: u32) {
+        if block == Block::Air {
+            return;
+        }
+        let e = self.counts.entry(block).or_insert(0);
+        *e = e.saturating_add(amount);
+    }
+
+    pub fn try_take(&mut self, block: Block, amount: u32) -> bool {
+        if block == Block::Air {
+            return false;
+        }
+        let current = self.count(block);
+        if current < amount {
+            return false;
+        }
+        self.counts.insert(block, current - amount);
+        true
+    }
+}
+
 #[derive(Clone, Copy)]
 struct BlockHit {
     solid: IVec3,
@@ -101,6 +143,7 @@ pub fn break_targeted_block(
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut inv: ResMut<BlockInventory>,
     mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
@@ -128,7 +171,9 @@ pub fn break_targeted_block(
         return;
     };
 
+    let broken = get_block_world(&world.chunks, hit.solid.x, hit.solid.y, hit.solid.z);
     if set_block_world(&mut world.chunks, hit.solid.x, hit.solid.y, hit.solid.z, Block::Air) {
+        inv.add(broken, 1);
         edits.send(LocalBlockEditEvent {
             x: hit.solid.x,
             y: hit.solid.y,
@@ -147,6 +192,7 @@ pub fn place_targeted_block(
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
     palette: Res<PlacementPalette>,
+    mut inv: ResMut<BlockInventory>,
     mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
@@ -184,13 +230,19 @@ pub fn place_targeted_block(
         return;
     }
 
+    let place_block = palette.selected_block();
+    if !inv.try_take(place_block, 1) {
+        return;
+    }
+
     if !set_block_world(
         &mut world.chunks,
         hit.previous_air.x,
         hit.previous_air.y,
         hit.previous_air.z,
-        palette.selected_block(),
+        place_block,
     ) {
+        inv.add(place_block, 1);
         return;
     }
 
@@ -202,6 +254,7 @@ pub fn place_targeted_block(
             hit.previous_air.z,
             Block::Air,
         );
+        inv.add(place_block, 1);
         return;
     }
 
@@ -210,7 +263,7 @@ pub fn place_targeted_block(
         x: hit.previous_air.x,
         y: hit.previous_air.y,
         z: hit.previous_air.z,
-        block: palette.selected_block(),
+        block: place_block,
     });
 }
 

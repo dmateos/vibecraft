@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::config::CHUNK_SIZE;
 use crate::generation::{GenerationQueue, GenerationRuntimeStats};
-use crate::interact::PlacementPalette;
+use crate::interact::{BlockInventory, PlacementPalette};
 use crate::npc::{Npc, NpcKind, NpcStimulus, NpcUiState, PlayerVitals};
 use crate::player::FlyCam;
 use crate::streaming::StreamingRuntimeStats;
@@ -124,6 +124,7 @@ pub fn spawn_hud(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 pub fn update_hud_text(
     palette: Res<PlacementPalette>,
+    inv: Res<BlockInventory>,
     terrain_mode: Res<TerrainMode>,
     weather: Res<WeatherState>,
     vitals: Res<PlayerVitals>,
@@ -135,8 +136,11 @@ pub fn update_hud_text(
         return;
     };
 
+    let selected = palette.selected_block();
+    let selected_count = inv.count(selected);
+
     text.sections[0].value = format!(
-        "FPS {:.0} | {:.2} ms\nTerrain: {} (F6) | Weather: {} (F7) | HP: {:.0}/{:.0}\nBlock [{} / {}]: {}  |  Wheel=Cycle\nNPC: {}\nControls: E=NPC, Z=Gun, Q=Grenade, F=Fly, R/F5=Reseed, F8=Day/Night, F3=Debug",
+        "FPS {:.0} | {:.2} ms\nTerrain: {} (F6) | Weather: {} (F7) | HP: {:.0}/{:.0}\nBlock [{} / {}]: {} x{}  |  Wheel=Cycle\nNPC: {}\nControls: E=Gun/Interact, Q=Grenade, F=Fly, R/F5=Reseed, F8=Day/Night, F3=Debug",
         frame.fps_now,
         frame.avg_ms,
         terrain_mode.label(),
@@ -146,6 +150,7 @@ pub fn update_hud_text(
         palette.selected_index() + 1,
         palette.len(),
         palette.selected_name(),
+        selected_count,
         npc_ui.message,
     );
 }

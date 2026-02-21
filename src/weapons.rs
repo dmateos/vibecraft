@@ -8,7 +8,7 @@ use bevy::ecs::query::QueryFilter;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
-use crate::interact::LocalBlockEditEvent;
+use crate::interact::{BlockInventory, LocalBlockEditEvent};
 use crate::net_client::NetClientState;
 use crate::npc::{DeadNpcCells, LoadedNpcs, Npc};
 use crate::player::FlyCam;
@@ -319,6 +319,7 @@ pub fn tick_bullets(
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     _loaded_npcs: ResMut<LoadedNpcs>,
+    mut inv: ResMut<BlockInventory>,
     mut dead_cells: ResMut<DeadNpcCells>,
     mut block_edits: EventWriter<LocalBlockEditEvent>,
     mut npc_q: ParamSet<(
@@ -377,7 +378,9 @@ pub fn tick_bullets(
         }
 
         if let Some((hit, _)) = block_hit {
+            let broken = get_block_world(&world.chunks, hit.x, hit.y, hit.z);
             if set_block_world(&mut world.chunks, hit.x, hit.y, hit.z, Block::Air) {
+                inv.add(broken, 1);
                 block_edits.send(LocalBlockEditEvent {
                     x: hit.x,
                     y: hit.y,

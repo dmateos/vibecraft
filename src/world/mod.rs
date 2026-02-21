@@ -9,7 +9,7 @@ use noise::{NoiseFn, Perlin};
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Block {
     Air,
     Grass,

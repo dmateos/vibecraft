@@ -74,6 +74,7 @@ fn main() {
         .insert_resource(weather::WeatherState::default())
         .insert_resource(streaming::StreamingRuntimeStats::default())
         .insert_resource(interact::PlacementPalette::default())
+        .insert_resource(interact::BlockInventory::default())
         .insert_resource(ui::DebugOverlayState::default())
         .insert_resource(ui::FrameStats::default())
         .add_event::<interact::LocalBlockEditEvent>()
