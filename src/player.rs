@@ -1,4 +1,6 @@
-//! First-person camera look, movement, collision, and fly mode control.
+//! First-person controller: camera look, movement, collision, and fly mode.
+//! Provides ground physics, step-up handling, and cursor capture behavior
+//! shared across local and connected gameplay modes.
 use std::collections::HashMap;
 
 use bevy::input::mouse::MouseMotion;

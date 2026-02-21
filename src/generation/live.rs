@@ -1,4 +1,6 @@
-//! Live LLM-driven generation request flow and prompt integration.
+//! Live LLM generation request flow, prompt editing, and async polling.
+//! Builds context-aware requests near the player anchor, submits them to an
+//! external LLM endpoint, and queues validated plans for world execution.
 use std::env;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Mutex;

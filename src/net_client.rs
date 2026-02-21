@@ -1,4 +1,6 @@
-//! Client-side networking state sync, remote entities, and net effects.
+//! In-game network client integration for snapshots and remote entities.
+//! Handles UDP session state, local input upload, remote state interpolation,
+//! and applying authoritative server block edits into the rendered world.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};

@@ -1,4 +1,6 @@
-//! Applies validated generation plans to world chunks and remesh paths.
+//! Applies compiled generation plans to the voxel world over time.
+//! Uses a queue with edit budgets per tick to avoid large frame spikes and
+//! tracks dirty chunks so remesh work is batched and predictable.
 use std::collections::{HashSet, VecDeque};
 
 use bevy::prelude::*;

@@ -1,4 +1,6 @@
-//! Wire protocol message types for client/server communication.
+//! Shared wire protocol message schema for client/server communication.
+//! Defines serializable packets, snapshot structures, and protocol constants
+//! used by both in-game net client code and standalone server/test binaries.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};

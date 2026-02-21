@@ -1,4 +1,6 @@
-//! Voxel world data structures, terrain generation, landmarks, and chunk meshing.
+//! Core voxel world model, procedural generation, landmarks, and chunk meshing.
+//! Owns block/chunk storage, biome sampling, authored structure placement, and
+//! conversion from voxel data to render meshes used by streaming systems.
 use std::collections::HashMap;
 
 use bevy::prelude::*;

@@ -1,4 +1,6 @@
-//! Water rendering and optional water-flow simulation systems.
+//! Water surface rendering and optional flow simulation subsystem.
+//! Manages water chunk meshes/materials near the camera and can run a bounded
+//! cell-flow update pass when physics mode is enabled.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};

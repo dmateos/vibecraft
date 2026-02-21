@@ -1,4 +1,6 @@
-//! Block targeting, break/place input handling, and placement palette state.
+//! Player block interaction systems: targeting, break/place, palette/inventory.
+//! Owns raycast-based edit actions, local inventory accounting, and placement
+//! constraints (collision/authority) so building logic stays centralized.
 use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
 use bevy::input::{ButtonState, mouse::MouseButtonInput};

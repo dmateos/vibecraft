@@ -1,4 +1,6 @@
-//! Sky dome/disc setup and day-night sky updates.
+//! Sky rendering setup and day/night visual updates.
+//! Spawns sky dome, sun/moon discs, and star field, then updates transforms
+//! and colors from the global day-night timeline.
 use bevy::math::primitives::{Cuboid, Sphere};
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;

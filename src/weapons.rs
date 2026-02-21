@@ -1,4 +1,6 @@
-//! Gun, bullets, grenades, explosions, and chunk-remesh work queue logic.
+//! Weapon gameplay systems: gun, bullets, grenades, VFX, and destruction queue.
+//! Handles projectile simulation, NPC damage/knockback, block destruction, and
+//! bounded explosion/remesh workloads to keep frame pacing stable.
 use std::collections::{HashSet, VecDeque};
 
 use bevy::math::primitives::Cuboid;

@@ -1,4 +1,6 @@
-//! Data schema for generation plans, edits, and request payloads.
+//! Serializable schema for generation requests and operations.
+//! Shared by manual JSON requests, planner output, and live LLM responses so
+//! one validation/compiler path can enforce constraints consistently.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

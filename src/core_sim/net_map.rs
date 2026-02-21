@@ -1,4 +1,6 @@
-//! Network-facing ID/entity mapping utilities for simulation sync.
+//! Conversion helpers between in-world simulation types and network IDs.
+//! Keeps protocol-facing enums stable while allowing internal block enums
+//! and storage representations to evolve independently.
 use crate::net::protocol::{BlockCell, BlockIdNet};
 use crate::world::Block;
 
@@ -49,4 +51,3 @@ pub fn block_cell(x: i32, y: i32, z: i32, block: Block) -> BlockCell {
         block: block_to_net(block),
     }
 }
-

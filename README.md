@@ -1,121 +1,135 @@
 # VibeCraft
 
-VibeCraft is a high-performance Minecraft-like voxel sandbox built in Rust with Bevy.
+VibeCraft is a high-performance voxel sandbox prototype built in Rust with Bevy.
 
-It focuses on:
-- chunked world streaming
-- procedural terrain + biomes
-- high FPS rendering
-- editable world interaction
-- live LLM-assisted structure generation
+The project focuses on:
+- large streamed worlds with high FPS
+- chunk-based generation and meshing
+- responsive block editing and combat tools
+- modular systems that can be split into client/server
 
-## Features
+## Current Gameplay Features
 
-- Procedural terrain with Perlin-based height, caves, and biome classification
-- Chunk meshing and runtime chunk streaming around the camera
-- Texture-atlas voxel material with lighting/fog/weather response
-- Water and cloud systems
-- Day/night cycle and weather blending
-- Block break/place interaction with palette cycling
-- Basic NPC system:
-  - friendly NPCs (can follow with interaction)
-  - hostile NPCs (chase/attack)
-- Village generation pass (plains/forest-biased, deterministic per seed)
+- Procedural terrain with Perlin-based elevation, cave carving, and biome selection
+- Chunk streaming and remeshing around the player camera
+- Texture-atlas terrain material with directional lighting, fog, and weather tinting
+- Day/night cycle with weather presets
+- Clouds and water rendering
+- Landmarks and authored world features (castle/city/settlement style content)
+- NPC simulation with friendly and hostile behaviors
+- Gun and grenade gameplay (projectiles, explosion work queue, terrain destruction)
+- Inventory pickup loop:
+  - breaking or shooting a block collects that block type
+  - placement consumes inventory count
+  - bottom hotbar UI shows selected slot + counts
+  - mouse wheel cycles selected slot
 
 ## Requirements
 
-- Rust (stable)
+- Rust stable toolchain
 - Cargo
-- GPU/API supported by Bevy (Metal/Vulkan/DX12 depending on platform)
+- GPU backend supported by Bevy (Metal, Vulkan, or DX12 depending on platform)
 
-## Run
+## Running
 
-```bash
-cargo run
-```
+This workspace has multiple binaries (`vibecraft`, `server`, `net_client`).
+Use explicit `--bin` selection.
 
-## Multiplayer Draft Scaffold
-
-This repo now includes an initial dedicated-server scaffold and protocol draft:
-- Design doc: `docs/MULTIPLAYER_DRAFT.md`
-- Shared protocol types: `src/net/protocol.rs`
-- Shared sim/net mapping helpers: `src/core_sim/net_map.rs`
-- Draft server binary: `src/bin/server.rs`
-
-Run the draft server scaffold:
+Run the main game client:
 
 ```bash
-cargo run --bin server -- --bind 0.0.0.0:40000 --seed 1337 --tick-hz 20
+cargo run --bin vibecraft
 ```
 
-Run the draft test client (separate terminal):
+Run optimized for smoother frame pacing:
 
 ```bash
-cargo run --bin net_client -- --server 127.0.0.1:40000 --name tester1
+cargo run --release --bin vibecraft
 ```
-
-Current status:
-- UDP transport wired
-- `Hello` / `Welcome` handshake wired
-- periodic snapshot broadcast wired
-- test client prints received snapshots
-
-Use the main game binary as a networked client:
-
-```bash
-cargo run -- --connect 127.0.0.1:40000 --name player1
-```
-
-If `--connect` is omitted, the game runs in normal local mode.
 
 ## Controls
 
-### Movement / camera
+### Movement and Camera
 - `W A S D`: move
 - `Mouse`: look
 - `Space`: jump
 - `Ctrl` (hold): sprint
 - `F`: toggle fly mode
 - `Esc`: release cursor
-- `Left Mouse`: lock cursor
+- `Left Mouse` (when cursor is free): re-lock cursor
 
-### World / gameplay
-- `Left Mouse`: break targeted block
-- `Right Mouse`: place selected block
-- `Mouse Wheel`: cycle block palette
+### Build and Combat
+- `Left Mouse`: break targeted block (adds to inventory)
+- `Right Mouse`: place selected block (consumes inventory)
+- `Mouse Wheel`: cycle hotbar selection
+- `E`: fire gun (also used for NPC interaction when applicable)
+- `Q`: throw grenade
+
+### World and Environment
 - `R` or `F5`: reseed/regenerate world
 - `F6`: toggle terrain mode (Procedural/Flat)
-
-### NPC / environment
-- `E`: interact with friendly NPC (toggle follow)
 - `F7`: cycle weather preset
 - `F8`: pause/resume day-night cycle
 
-### Generation / debug
-- `P`: open/close LLM prompt editing
+### Generation and Debug
+- `P`: toggle prompt editing mode
 - `Enter`: submit prompt
-- `L`/`T`: trigger live LLM generation
-- `J`: load generation request JSON
+- `L` / `T`: trigger live LLM generation
+- `J`: load generation request JSON from assets
 - `G`: trigger demo generation
 - `F3`: toggle debug overlay
 
-## Project structure
+## Multiplayer Draft Status
 
-- `src/main.rs`: app setup, schedule wiring, global resources
-- `src/world/mod.rs`: terrain generation, biome logic, meshing, villages/features
-- `src/streaming.rs`: chunk generation + render streaming
-- `src/materials.rs`: voxel material definitions
-- `src/water.rs`: water mesh/material streaming
-- `src/clouds.rs`: cloud streaming/animation
-- `src/weather.rs`: weather + day/night lighting integration
-- `src/interact.rs`: block targeting/break/place
-- `src/player.rs`: player movement/collision/fly mode
-- `src/npc.rs`: NPC spawning, AI, interaction, combat
-- `src/generation/*`: LLM and manual generation pipeline
-- `src/ui.rs`: HUD/debug overlays
+The repo includes a draft dedicated-server path and protocol scaffold.
+
+Relevant files:
+- `docs/MULTIPLAYER_DRAFT.md`
+- `src/net/protocol.rs`
+- `src/bin/server.rs`
+- `src/bin/net_client.rs`
+- `src/net_client.rs`
+
+Run server scaffold:
+
+```bash
+cargo run --bin server -- --bind 0.0.0.0:40000 --seed 1337 --tick-hz 20
+```
+
+Run lightweight protocol test client:
+
+```bash
+cargo run --bin net_client -- --server 127.0.0.1:40000 --name tester1
+```
+
+Run game client connected to server:
+
+```bash
+cargo run --bin vibecraft -- --connect 127.0.0.1:40000 --name player1
+```
+
+If `--connect` is omitted, game runs in local mode.
+
+## Code Layout
+
+- `src/main.rs`: app bootstrap, resource insertion, system schedule wiring
+- `src/world/mod.rs`: voxel data model, terrain generation, biome/landmark placement, chunk meshing
+- `src/streaming.rs`: camera-driven chunk load/generate/mesh orchestration
+- `src/materials.rs`: terrain material/shader bindings
+- `src/weather.rs`: weather + day/night blending into terrain/cloud/water materials
+- `src/sky.rs`: sky dome/discs/stars setup and animation
+- `src/water.rs`: water surface rendering and optional flow simulation
+- `src/clouds.rs`: cloud chunk spawning, mesh generation, animation
+- `src/player.rs`: first-person movement, collision, fly mode
+- `src/interact.rs`: raycast targeting, break/place, hotbar palette, inventory resource
+- `src/ui.rs`: crosshair, HUD, hotbar, debug overlay
+- `src/weapons.rs`: gun, bullets, grenades, explosion processing and visual effects
+- `src/npc.rs`: NPC spawning, AI, interaction, combat responses
+- `src/generation/*`: plan schema, validation, planning, compilation, execution, live LLM hooks
+- `src/net/*`: shared networking protocol and types
+- `src/net_client.rs`: in-game network client state sync and remote visuals
 
 ## Notes
 
-- After major generation or mapping changes, regenerate with `R`/`F5`.
-- Assets are organized under `assets/` with project-owned terrain atlas paths.
-- This is currently an engine prototype; systems are intentionally modular for iteration.
+- This is an actively iterated prototype, so systems are optimized for clarity and modular refactors.
+- Most simulation/rendering modules are intentionally isolated so features can be tuned or replaced without full-engine rewrites.

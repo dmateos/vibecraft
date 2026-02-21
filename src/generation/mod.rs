@@ -1,4 +1,6 @@
-//! Generation module root for schema, planning, validation, and execution.
+//! Generation pipeline root: schema, planning, validation, compile, execute.
+//! Exposes user-triggered entry points (demo/json/live LLM) while keeping
+//! each stage isolated so behavior and safety rules can evolve independently.
 mod compiler;
 mod executor;
 mod live;

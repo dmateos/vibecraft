@@ -1,4 +1,6 @@
-//! NPC spawning, AI behavior, interaction, and debug visualization.
+//! NPC spawning, behavior simulation, combat response, and debug drawing.
+//! Owns friendly/hostile decision loops, movement constraints, and player
+//! interaction hooks while supporting authority split for networked mode.
 use std::collections::{HashMap, HashSet};
 
 use bevy::math::primitives::Cuboid;

@@ -1,4 +1,6 @@
-//! High-level plan construction utilities for world generation tasks.
+//! Heuristic prompt planner for turning text intent into structured ops.
+//! Chooses primitives, proportions, and passes (base/detail/decor) to build
+//! stronger generation requests before they reach compiler/validator stages.
 use crate::generation::schema::{GenerationOp, GenerationRequest};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

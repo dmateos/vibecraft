@@ -1,4 +1,6 @@
-//! Headless UDP test server for multiplayer scaffold snapshots/events.
+//! Headless dedicated-server scaffold for multiplayer experiments.
+//! Owns simple authoritative state, processes client input frames, and
+//! broadcasts snapshots/block edits/events over the shared wire protocol.
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};

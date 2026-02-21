@@ -1,4 +1,6 @@
-//! Cloud mesh streaming, rendering, and animation systems.
+//! Cloud chunk streaming, mesh generation, and motion systems.
+//! Keeps cloud geometry around the camera, applies weather/day tinting,
+//! and updates drift animation while staying decoupled from terrain chunks.
 use std::collections::{HashMap, HashSet};
 
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};

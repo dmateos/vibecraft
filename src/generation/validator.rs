@@ -1,4 +1,6 @@
-//! Validation rules that sanitize/accept generation plans.
+//! Validation and guardrails for generation request payloads.
+//! Rejects unsupported/unsafe ops early so downstream compilation and world
+//! editing run against bounded, predictable, and debuggable input.
 use crate::generation::schema::{GenerationOp, GenerationRequest};
 
 pub fn validate_request(req: &GenerationRequest) -> Result<(), String> {

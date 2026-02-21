@@ -1,4 +1,6 @@
-//! Entry point for the local VibeCraft client app and system wiring.
+//! Main Bevy client entry point and full system schedule wiring.
+//! Inserts global resources, configures rendering/material plugins, and
+//! composes gameplay systems in ordered update sets for local play.
 mod clouds;
 mod config;
 mod generation;

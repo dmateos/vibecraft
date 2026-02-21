@@ -1,4 +1,6 @@
-//! Chunk streaming and generation/meshing orchestration around the camera.
+//! Camera-centric chunk streaming and generation/meshing orchestration.
+//! Decides desired chunk set around the player, generates missing terrain,
+//! and schedules mesh updates with per-tick budgets for stable frame time.
 use std::collections::HashSet;
 
 use bevy::prelude::*;

@@ -1,4 +1,6 @@
-//! Crosshair and HUD/debug overlay UI spawning and updates.
+//! UI layer for crosshair, HUD, hotbar inventory, and debug overlays.
+//! Spawns text and slot widgets and keeps them synchronized with runtime
+//! resources (FPS, mode state, selected block, and inventory counts).
 use bevy::prelude::*;
 use std::collections::VecDeque;
 

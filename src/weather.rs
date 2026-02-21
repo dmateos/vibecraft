@@ -1,4 +1,6 @@
-//! Day-night and weather state blending applied to scene materials/lights.
+//! Day-night timeline and weather state blending for scene visuals.
+//! Updates lighting and fog/material parameters across terrain, water, and
+//! clouds so atmosphere remains coherent across gameplay systems.
 use bevy::prelude::*;
 
 use crate::clouds::CloudMaterial;

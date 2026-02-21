@@ -1,4 +1,6 @@
-//! Foliage streaming/animation scaffolding and material setup.
+//! Billboard foliage scaffolding for biome vegetation rendering.
+//! Handles streaming and simple wind animation paths; currently optional
+//! and designed so foliage can be disabled without affecting terrain logic.
 use std::collections::{HashMap, HashSet};
 
 use bevy::pbr::{NotShadowCaster, NotShadowReceiver};

@@ -1,4 +1,6 @@
-//! Compilation of generation intents into concrete voxel edit batches.
+//! Compiles validated generation intents into concrete voxel edit batches.
+//! Converts high-level ops (prefabs/primitives) into bounded block edits and
+//! records touched chunks so execution/remesh work can be scheduled cleanly.
 use std::collections::HashSet;
 
 use bevy::prelude::*;

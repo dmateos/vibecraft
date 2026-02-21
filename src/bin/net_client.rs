@@ -1,4 +1,6 @@
-//! Minimal CLI network client for protocol smoke testing.
+//! Minimal CLI network probe for the draft UDP protocol.
+//! Sends hello/input/ack messages and prints snapshots/events so protocol
+//! changes can be tested quickly without launching full Bevy rendering.
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::thread;
