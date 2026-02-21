@@ -37,147 +37,10 @@ fn main() {
     let net_cfg = net_client::NetClientConfig::from_args();
     let mut app = App::new();
     configure_startup_resources(&mut app);
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "VibeCraft".to_string(),
-                resolution: (1728.0, 972.0).into(),
-                present_mode: bevy::window::PresentMode::AutoNoVsync,
-                ..default()
-            }),
-            ..default()
-        }))
-        .add_plugins(MaterialPlugin::<VoxelMaterial>::default())
-        .add_plugins(water::water_material_plugin())
-        .add_systems(
-            Startup,
-            (
-                setup,
-                sky::setup_sky,
-                clouds::setup_clouds,
-                npc::setup_npcs,
-                water::setup_water,
-                weapons::setup_weapons,
-                generation::initialize_prompt_input,
-                ui::spawn_crosshair,
-                ui::spawn_hud,
-                ui::spawn_hotbar,
-                ui::spawn_start_menu,
-                ui::spawn_loading_overlay,
-            ),
-        )
-        .add_systems(
-            Update,
-            (
-                net_client::setup_net_client,
-                net_client::setup_net_visual_assets,
-                net_client::tick_net_client,
-                net_client::apply_remote_block_edits,
-                net_client::sync_remote_entities,
-                net_client::spawn_net_fx,
-                net_client::tick_net_fx,
-            )
-                .run_if(world_phase_active),
-        )
-        .add_systems(
-            Update,
-            (
-                player::camera_look,
-                player::player_move_and_collision,
-                interact::cycle_palette_on_scroll,
-                interact::break_targeted_block,
-                interact::place_targeted_block,
-                npc::npc_interactions,
-                npc::tick_npcs,
-                weapons::ensure_view_gun,
-                weapons::fire_gun_on_key,
-                weapons::tick_bullets,
-                weapons::throw_grenade_on_key,
-                weapons::tick_grenades,
-                weapons::process_explosion_jobs,
-                weapons::tick_weapon_vfx,
-            )
-                .run_if(gameplay_phase_active),
-        )
-        .add_systems(
-            Update,
-            block_edit::apply_block_mutations
-                .after(interact::place_targeted_block)
-                .after(weapons::process_explosion_jobs)
-                .after(net_client::apply_remote_block_edits)
-                .run_if(world_phase_active),
-        )
-        .add_systems(
-            Update,
-            (
-                interact::highlight_targeted_block,
-                generation::trigger_demo_generation_on_key,
-                generation::load_generation_request_on_key,
-                generation::toggle_prompt_input_mode,
-                generation::edit_prompt_input,
-                generation::trigger_live_llm_generation_on_key,
-                generation::poll_live_llm_result,
-                generation::update_prompt_window_title,
-                generation::process_generation_queue,
-                water::clear_water_sim_on_world_reset_keys,
-                regenerate_world_on_key,
-                toggle_terrain_mode_on_key,
-                weather::cycle_weather_on_key,
-                water::toggle_water_physics_on_key,
-                npc::capture_player_noise,
-            )
-                .run_if(gameplay_phase_active),
-        )
-        .add_systems(
-            Update,
-            (
-                ui::handle_start_menu_buttons,
-                ui::tick_loading_gate,
-                ui::sync_ui_phase_visibility,
-            ),
-        )
-        .add_systems(
-            Update,
-            (
-                streaming::stream_chunks_around_camera,
-                npc::stream_npcs_around_camera,
-                water::queue_water_updates_from_block_edits,
-                water::tick_water_simulation,
-                water::refresh_dirty_water_meshes,
-                water::stream_water_around_camera,
-                clouds::stream_clouds_around_camera,
-                clouds::animate_clouds,
-                weather::tick_day_night,
-                weather::tick_weather_blend,
-                weather::apply_weather_to_materials,
-                sky::update_sky,
-                npc::draw_npc_debug_gizmos,
-            )
-                .run_if(world_phase_active),
-        )
-        .add_systems(
-            Update,
-            (
-                ui::toggle_debug_overlay,
-                ui::sample_frame_stats,
-                ui::update_hud_text,
-                ui::update_hotbar_ui,
-                ui::update_debug_hud_text,
-            ),
-        );
-
-    if net_cfg.enabled {
-        info!(
-            "network client boot config: connect={} name={}",
-            net_cfg
-                .server
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "<none>".to_string()),
-            net_cfg.name
-        );
-    } else {
-        info!("network client disabled (local mode)");
-    }
-    app.insert_resource(net_client::NetClientState::new(net_cfg));
+    configure_plugins(&mut app);
+    configure_startup_systems(&mut app);
+    configure_update_systems(&mut app);
+    configure_network_state(&mut app, net_cfg);
 
     app.run();
 }
@@ -240,6 +103,158 @@ fn configure_startup_resources(app: &mut App) {
         .insert_resource(ui::FrameStats::default())
         .add_event::<block_edit::LocalBlockEditEvent>()
         .add_event::<block_edit::BlockMutationRequest>();
+}
+
+fn configure_plugins(app: &mut App) {
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "VibeCraft".to_string(),
+            resolution: (1728.0, 972.0).into(),
+            present_mode: bevy::window::PresentMode::AutoNoVsync,
+            ..default()
+        }),
+        ..default()
+    }))
+    .add_plugins(MaterialPlugin::<VoxelMaterial>::default())
+    .add_plugins(water::water_material_plugin());
+}
+
+fn configure_startup_systems(app: &mut App) {
+    app.add_systems(
+        Startup,
+        (
+            setup,
+            sky::setup_sky,
+            clouds::setup_clouds,
+            npc::setup_npcs,
+            water::setup_water,
+            weapons::setup_weapons,
+            generation::initialize_prompt_input,
+            ui::spawn_crosshair,
+            ui::spawn_hud,
+            ui::spawn_hotbar,
+            ui::spawn_start_menu,
+            ui::spawn_loading_overlay,
+        ),
+    );
+}
+
+fn configure_update_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            net_client::setup_net_client,
+            net_client::setup_net_visual_assets,
+            net_client::tick_net_client,
+            net_client::apply_remote_block_edits,
+            net_client::sync_remote_entities,
+            net_client::spawn_net_fx,
+            net_client::tick_net_fx,
+        )
+            .run_if(world_phase_active),
+    )
+    .add_systems(
+        Update,
+        (
+            player::camera_look,
+            player::player_move_and_collision,
+            interact::cycle_palette_on_scroll,
+            interact::break_targeted_block,
+            interact::place_targeted_block,
+            npc::npc_interactions,
+            npc::tick_npcs,
+            weapons::ensure_view_gun,
+            weapons::fire_gun_on_key,
+            weapons::tick_bullets,
+            weapons::throw_grenade_on_key,
+            weapons::tick_grenades,
+            weapons::process_explosion_jobs,
+            weapons::tick_weapon_vfx,
+        )
+            .run_if(gameplay_phase_active),
+    )
+    .add_systems(
+        Update,
+        block_edit::apply_block_mutations
+            .after(interact::place_targeted_block)
+            .after(weapons::process_explosion_jobs)
+            .after(net_client::apply_remote_block_edits)
+            .run_if(world_phase_active),
+    )
+    .add_systems(
+        Update,
+        (
+            interact::highlight_targeted_block,
+            generation::trigger_demo_generation_on_key,
+            generation::load_generation_request_on_key,
+            generation::toggle_prompt_input_mode,
+            generation::edit_prompt_input,
+            generation::trigger_live_llm_generation_on_key,
+            generation::poll_live_llm_result,
+            generation::update_prompt_window_title,
+            generation::process_generation_queue,
+            water::clear_water_sim_on_world_reset_keys,
+            regenerate_world_on_key,
+            toggle_terrain_mode_on_key,
+            weather::cycle_weather_on_key,
+            water::toggle_water_physics_on_key,
+            npc::capture_player_noise,
+        )
+            .run_if(gameplay_phase_active),
+    )
+    .add_systems(
+        Update,
+        (
+            ui::handle_start_menu_buttons,
+            ui::tick_loading_gate,
+            ui::sync_ui_phase_visibility,
+        ),
+    )
+    .add_systems(
+        Update,
+        (
+            streaming::stream_chunks_around_camera,
+            npc::stream_npcs_around_camera,
+            water::queue_water_updates_from_block_edits,
+            water::tick_water_simulation,
+            water::refresh_dirty_water_meshes,
+            water::stream_water_around_camera,
+            clouds::stream_clouds_around_camera,
+            clouds::animate_clouds,
+            weather::tick_day_night,
+            weather::tick_weather_blend,
+            weather::apply_weather_to_materials,
+            sky::update_sky,
+            npc::draw_npc_debug_gizmos,
+        )
+            .run_if(world_phase_active),
+    )
+    .add_systems(
+        Update,
+        (
+            ui::toggle_debug_overlay,
+            ui::sample_frame_stats,
+            ui::update_hud_text,
+            ui::update_hotbar_ui,
+            ui::update_debug_hud_text,
+        ),
+    );
+}
+
+fn configure_network_state(app: &mut App, net_cfg: net_client::NetClientConfig) {
+    if net_cfg.enabled {
+        info!(
+            "network client boot config: connect={} name={}",
+            net_cfg
+                .server
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "<none>".to_string()),
+            net_cfg.name
+        );
+    } else {
+        info!("network client disabled (local mode)");
+    }
+    app.insert_resource(net_client::NetClientState::new(net_cfg));
 }
 
 fn setup(
@@ -340,36 +355,21 @@ fn regenerate_world_on_key(
     }
     info!("reseeding world: {} -> {}", world.seed, new_seed);
     world.seed = new_seed;
-    world.chunks.clear();
-
-    let chunk_entities: Vec<Entity> = loaded_chunks.entries.values().map(|c| c.entity).collect();
-    loaded_chunks.entries.clear();
-    for entity in chunk_entities {
-        commands.entity(entity).despawn_recursive();
-    }
-
-    loaded_clouds.clear_and_despawn(&mut commands);
-    loaded_npcs.clear_and_despawn(&mut commands);
-    dead_npc_cells.clear();
-    for entity in &grenade_q {
-        commands.entity(entity).despawn_recursive();
-    }
-    for entity in &bullet_q {
-        commands.entity(entity).despawn_recursive();
-    }
-    for entity in &weapon_vfx_q {
-        commands.entity(entity).despawn_recursive();
-    }
-    weapons::clear_explosion_work_queue(&mut explosion_work);
-    vitals.health = vitals.max_health;
-    loaded_water.clear_and_despawn(&mut commands);
-
-    if let Ok(mut cam) = cam_q.get_single_mut() {
-        let min_eye_y = SEA_LEVEL as f32 + 12.0;
-        if cam.translation.y < min_eye_y {
-            cam.translation.y = min_eye_y;
-        }
-    }
+    clear_active_world_state(
+        &mut commands,
+        &mut world,
+        &mut loaded_chunks,
+        &mut loaded_clouds,
+        &mut loaded_npcs,
+        &mut dead_npc_cells,
+        &mut vitals,
+        &mut loaded_water,
+        &grenade_q,
+        &bullet_q,
+        &weapon_vfx_q,
+        &mut explosion_work,
+        &mut cam_q,
+    );
 }
 
 fn toggle_terrain_mode_on_key(
@@ -400,28 +400,61 @@ fn toggle_terrain_mode_on_key(
     *terrain_mode = terrain_mode.toggled();
     info!("terrain mode switched to {}", terrain_mode.label());
 
+    clear_active_world_state(
+        &mut commands,
+        &mut world,
+        &mut loaded_chunks,
+        &mut loaded_clouds,
+        &mut loaded_npcs,
+        &mut dead_npc_cells,
+        &mut vitals,
+        &mut loaded_water,
+        &grenade_q,
+        &bullet_q,
+        &weapon_vfx_q,
+        &mut explosion_work,
+        &mut cam_q,
+    );
+}
+
+fn clear_active_world_state(
+    commands: &mut Commands,
+    world: &mut VoxelWorld,
+    loaded_chunks: &mut LoadedChunks,
+    loaded_clouds: &mut clouds::LoadedClouds,
+    loaded_npcs: &mut npc::LoadedNpcs,
+    dead_npc_cells: &mut npc::DeadNpcCells,
+    vitals: &mut npc::PlayerVitals,
+    loaded_water: &mut water::LoadedWater,
+    grenade_q: &Query<Entity, With<weapons::Grenade>>,
+    bullet_q: &Query<Entity, With<weapons::Bullet>>,
+    weapon_vfx_q: &Query<Entity, With<weapons::WeaponVfx>>,
+    explosion_work: &mut weapons::ExplosionWorkQueue,
+    cam_q: &mut Query<&mut Transform, With<FlyCam>>,
+) {
     world.chunks.clear();
+
     let chunk_entities: Vec<Entity> = loaded_chunks.entries.values().map(|c| c.entity).collect();
     loaded_chunks.entries.clear();
     for entity in chunk_entities {
         commands.entity(entity).despawn_recursive();
     }
 
-    loaded_clouds.clear_and_despawn(&mut commands);
-    loaded_npcs.clear_and_despawn(&mut commands);
+    loaded_clouds.clear_and_despawn(commands);
+    loaded_npcs.clear_and_despawn(commands);
     dead_npc_cells.clear();
-    for entity in &grenade_q {
+    for entity in grenade_q.iter() {
         commands.entity(entity).despawn_recursive();
     }
-    for entity in &bullet_q {
+    for entity in bullet_q.iter() {
         commands.entity(entity).despawn_recursive();
     }
-    for entity in &weapon_vfx_q {
+    for entity in weapon_vfx_q.iter() {
         commands.entity(entity).despawn_recursive();
     }
-    weapons::clear_explosion_work_queue(&mut explosion_work);
+    weapons::clear_explosion_work_queue(explosion_work);
     vitals.health = vitals.max_health;
-    loaded_water.clear_and_despawn(&mut commands);
+    loaded_water.clear_and_despawn(commands);
 
     if let Ok(mut cam) = cam_q.get_single_mut() {
         let min_eye_y = SEA_LEVEL as f32 + 12.0;
