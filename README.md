@@ -112,22 +112,65 @@ If `--connect` is omitted, game runs in local mode.
 
 ## Code Layout
 
+### Core
+
 - `src/main.rs`: app bootstrap, resource insertion, system schedule wiring
-- `src/world/mod.rs`: voxel data model, terrain generation, biome/landmark placement, chunk meshing
+- `src/config.rs`: central gameplay/world tuning constants
+- `src/block_edit.rs`: unified block mutation pipeline (event-driven dedup + batched remeshing)
+- `src/physics.rs`: shared AABB collision queries for player and NPC systems
+- `src/perception.rs`: shared line-of-sight and FOV checks
+
+### World
+
+- `src/world/mod.rs`: module re-exports
+- `src/world/voxel.rs`: Block/Chunk types, VoxelWorld resource, block read/write helpers
+- `src/world/generation.rs`: Perlin-based terrain generation with biome classification
+- `src/world/landmarks.rs`: procedural structures (villages, monuments, cities, mazes, pyramids, observatories)
+- `src/world/meshing.rs`: chunk mesh building with LOD and ambient occlusion
+
+### NPC
+
+- `src/npc/mod.rs`: module re-exports and NPC constants
+- `src/npc/components.rs`: NPC data types, resources (vitals, stimulus, UI state), asset setup
+- `src/npc/ai.rs`: NPC tick simulation, player interaction, AI decision logic
+- `src/npc/spawn.rs`: camera-driven NPC streaming and entity spawning
+- `src/npc/movement.rs`: pathfinding, collision helpers, step-climbing, heading selection
+- `src/npc/debug.rs`: debug gizmo visualization for NPC state
+
+### Environment
+
 - `src/streaming.rs`: camera-driven chunk load/generate/mesh orchestration
 - `src/materials.rs`: terrain material/shader bindings
 - `src/weather.rs`: weather + day/night blending into terrain/cloud/water materials
 - `src/sky.rs`: sky dome/discs/stars setup and animation
 - `src/water.rs`: water surface rendering and optional flow simulation
 - `src/clouds.rs`: cloud chunk spawning, mesh generation, animation
+- `src/foliage.rs`: tree and vegetation rendering
+
+### Gameplay
+
 - `src/player.rs`: first-person movement, collision, fly mode
 - `src/interact.rs`: raycast targeting, break/place, hotbar palette, inventory resource
-- `src/ui.rs`: crosshair, HUD, hotbar, debug overlay
 - `src/weapons.rs`: gun, bullets, grenades, explosion processing and visual effects
-- `src/npc.rs`: NPC spawning, AI, interaction, combat responses
-- `src/generation/*`: plan schema, validation, planning, compilation, execution, live LLM hooks
-- `src/net/*`: shared networking protocol and types
+- `src/ui.rs`: crosshair, HUD, hotbar, debug overlay
+
+### Generation
+
+- `src/generation/mod.rs`: module re-exports and config resources
+- `src/generation/schema.rs`: serde-based generation request schema
+- `src/generation/planner.rs`: converts user intent to structured operation sequences
+- `src/generation/compiler.rs`: compiles generation ops (boxes, cylinders, spheres) into block edits
+- `src/generation/validator.rs`: bounds and safety validation rules
+- `src/generation/executor.rs`: generation queue execution
+- `src/generation/live.rs`: LLM prompt editing and HTTP polling
+
+### Networking
+
+- `src/net/protocol.rs`: shared networking protocol and types
 - `src/net_client.rs`: in-game network client state sync and remote visuals
+- `src/core_sim/net_map.rs`: block enum network conversion helpers
+- `src/bin/server.rs`: dedicated server scaffold
+- `src/bin/net_client.rs`: lightweight protocol test client
 
 ## Notes
 
