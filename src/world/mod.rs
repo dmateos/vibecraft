@@ -1310,7 +1310,7 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     let center = city_center(noise.seed);
     let cx = center.x;
     let cz = center.y;
-    let influence = 136;
+    let influence = 188;
 
     let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
     let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
@@ -1328,8 +1328,8 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     flatten_village_ground(chunk, cx, base_y, cz, influence);
 
     // Hierarchical roads: big avenues + smaller cross streets.
-    for z in -112_i32..=112_i32 {
-        for x in -112_i32..=112_i32 {
+    for z in -152_i32..=152_i32 {
+        for x in -152_i32..=152_i32 {
             let ax = x.rem_euclid(24);
             let az = z.rem_euclid(24);
             let sx = x.rem_euclid(12);
@@ -1347,21 +1347,21 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 
     // Ring avenues.
-    for z in -126_i32..=126_i32 {
-        for x in -126_i32..=126_i32 {
+    for z in -166_i32..=166_i32 {
+        for x in -166_i32..=166_i32 {
             let d2 = x * x + z * z;
-            if (118 * 118..=126 * 126).contains(&d2) {
+            if (154 * 154..=166 * 166).contains(&d2) {
                 set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
             }
-            if (92 * 92..=98 * 98).contains(&d2) {
+            if (122 * 122..=132 * 132).contains(&d2) {
                 set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
             }
         }
     }
 
     // Building lots.
-    for gz in -9_i32..=9_i32 {
-        for gx in -9_i32..=9_i32 {
+    for gz in -12_i32..=12_i32 {
+        for gx in -12_i32..=12_i32 {
             if gx.abs() <= 1 && gz.abs() <= 1 {
                 continue;
             }
@@ -1371,6 +1371,9 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
             }
             let lot_cx = cx + gx * 12 + (((lot_hash >> 3) & 3) as i32 - 1);
             let lot_cz = cz + gz * 12 + (((lot_hash >> 5) & 3) as i32 - 1);
+            if lot_cx < cx - 148 || lot_cx > cx + 148 || lot_cz < cz - 148 || lot_cz > cz + 148 {
+                continue;
+            }
             let hw = 3 + ((lot_hash >> 8) & 0x2) as i32;
             let hd = 3 + ((lot_hash >> 10) & 0x2) as i32;
 
@@ -1514,8 +1517,8 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 
     // Main stepped pyramid.
-    for step in 0..18 {
-        let r = 34 - step * 2;
+    for step in 0..24 {
+        let r = 40 - step * 2;
         let y = base_y + 2 + step;
         for z in -r..=r {
             for x in -r..=r {
@@ -1525,10 +1528,10 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 
     // Hollow entry chamber.
-    for y in base_y + 3..=base_y + 12 {
+    for y in base_y + 3..=base_y + 16 {
         for z in -3..=3 {
             for x in -4..=4 {
-                set_if_inside(chunk, cx + x, y, cz - 34 + z, Block::Air);
+                set_if_inside(chunk, cx + x, y, cz - 40 + z, Block::Air);
             }
         }
     }
@@ -1546,7 +1549,7 @@ fn stamp_desert_pyramid(chunk: &mut Chunk, noise: &TerrainNoise) {
         }
     }
 
-    for y in base_y + 21..=base_y + 24 {
+    for y in base_y + 28..=base_y + 32 {
         set_if_inside(chunk, cx, y, cz, Block::Yellow);
     }
 }
@@ -1610,7 +1613,7 @@ fn stamp_observatory(chunk: &mut Chunk, noise: &TerrainNoise) {
 
 #[inline]
 fn monument_center(seed: u32) -> IVec2 {
-    let radius = 104.0 + ((seed >> 5) & 63) as f32;
+    let radius = 248.0 + ((seed >> 5) & 127) as f32;
     let angle = ((seed.rotate_left(9) as f32) / (u32::MAX as f32)) * std::f32::consts::TAU;
     IVec2::new((angle.cos() * radius).round() as i32, (angle.sin() * radius).round() as i32)
 }
@@ -1626,8 +1629,8 @@ fn city_center(seed: u32) -> IVec2 {
     };
     let side = if (seed & 1) == 0 { 1.0 } else { -1.0 };
     let perp = Vec2::new(-mdir.y, mdir.x) * side;
-    let outward = mdir * (46.0 + ((seed >> 11) & 31) as f32);
-    let lateral = perp * (196.0 + ((seed >> 7) & 47) as f32);
+    let outward = mdir * (122.0 + ((seed >> 11) & 63) as f32);
+    let lateral = perp * (358.0 + ((seed >> 7) & 95) as f32);
     let c = m + outward + lateral;
     IVec2::new(c.x.round() as i32, c.y.round() as i32)
 }
@@ -1638,7 +1641,7 @@ fn harbor_center(seed: u32) -> IVec2 {
     let c = Vec2::new(city.x as f32, city.y as f32);
     let dir = if c.length_squared() > 1.0 { c.normalize() } else { Vec2::new(1.0, 0.0) };
     let perp = Vec2::new(-dir.y, dir.x) * if (seed & 2) == 0 { 1.0 } else { -1.0 };
-    let p = c + perp * (170.0 + ((seed >> 3) & 31) as f32) - dir * 52.0;
+    let p = c + perp * (304.0 + ((seed >> 3) & 95) as f32) - dir * 118.0;
     IVec2::new(p.x.round() as i32, p.y.round() as i32)
 }
 
@@ -1647,8 +1650,8 @@ fn pyramid_center(seed: u32) -> IVec2 {
     let monument = monument_center(seed);
     let m = Vec2::new(monument.x as f32, monument.y as f32);
     let dir = if m.length_squared() > 1.0 { m.normalize() } else { Vec2::new(1.0, 0.0) };
-    let p = m * (1.0 + (140.0 + ((seed >> 13) & 63) as f32) / m.length().max(1.0));
-    let q = p + Vec2::new(-dir.y, dir.x) * (40.0 + ((seed >> 19) & 31) as f32);
+    let p = m * (1.0 + (336.0 + ((seed >> 13) & 127) as f32) / m.length().max(1.0));
+    let q = p + Vec2::new(-dir.y, dir.x) * (108.0 + ((seed >> 19) & 63) as f32);
     IVec2::new(q.x.round() as i32, q.y.round() as i32)
 }
 
@@ -1658,7 +1661,7 @@ fn observatory_center(seed: u32) -> IVec2 {
     let c = Vec2::new(city.x as f32, city.y as f32);
     let dir = if c.length_squared() > 1.0 { c.normalize() } else { Vec2::new(1.0, 0.0) };
     let perp = Vec2::new(dir.y, -dir.x);
-    let p = c + dir * (128.0 + ((seed >> 17) & 63) as f32) + perp * (52.0 + ((seed >> 21) & 31) as f32);
+    let p = c + dir * (256.0 + ((seed >> 17) & 127) as f32) + perp * (124.0 + ((seed >> 21) & 63) as f32);
     IVec2::new(p.x.round() as i32, p.y.round() as i32)
 }
 
