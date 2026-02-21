@@ -115,7 +115,7 @@ pub fn apply_weather_to_materials(
     weather: Res<WeatherState>,
     cycle: Res<DayNightState>,
     terrain_handle: Res<TerrainMaterial>,
-    water_handle: Res<WaterMaterial>,
+    water_handle: Option<Res<WaterMaterial>>,
     cloud_handle: Res<CloudMaterial>,
     mut clear_color: ResMut<ClearColor>,
     mut ambient: ResMut<AmbientLight>,
@@ -140,7 +140,9 @@ pub fn apply_weather_to_materials(
         terrain.params.weather = Vec4::new(cloud_shadow, 0.018, 0.013, rain_darken);
     }
 
-    if let Some(water) = water_assets.get_mut(&water_handle.0) {
+    if let Some(water_handle) = water_handle
+        && let Some(water) = water_assets.get_mut(&water_handle.0)
+    {
         water.params.shallow_color = Vec4::new(
             0.10 + rain_darken * 0.02,
             0.58 - rain_darken * 0.08,

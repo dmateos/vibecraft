@@ -297,7 +297,7 @@ pub fn tick_net_client(
     }
 
     // Latch one-shot gameplay intents every frame so 10Hz send loop doesn't drop clicks/presses.
-    if keys.just_pressed(KeyCode::KeyZ) {
+    if keys.just_pressed(KeyCode::KeyE) {
         state.latched_fire = true;
         if let Ok(cam) = cam_q.get_single()
             && let Some((solid, _)) = raycast_target(cam.translation, *cam.forward(), &world.chunks, crate::config::BREAK_REACH * 2.3)

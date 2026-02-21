@@ -58,6 +58,8 @@ fn main() {
         .insert_resource(npc::NpcStimulus::default())
         .insert_resource(npc::DeadNpcCells::default())
         .insert_resource(water::LoadedWater::default())
+        .insert_resource(water::WaterPhysicsConfig::default())
+        .insert_resource(water::WaterFlowSim::default())
         .insert_resource(water::WaterStreamTimer(Timer::from_seconds(
             0.08,
             TimerMode::Repeating,
@@ -118,6 +120,14 @@ fn main() {
                 weapons::process_explosion_jobs,
                 weapons::process_dirty_chunk_remeshes,
                 weapons::tick_weapon_vfx,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                water::queue_water_updates_from_block_edits,
+                water::tick_water_simulation,
+                water::refresh_dirty_water_meshes,
                 water::stream_water_around_camera,
                 clouds::stream_clouds_around_camera,
                 clouds::animate_clouds,
@@ -138,12 +148,24 @@ fn main() {
                 generation::poll_live_llm_result,
                 generation::update_prompt_window_title,
                 generation::process_generation_queue,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                water::clear_water_sim_on_world_reset_keys,
                 regenerate_world_on_key,
                 toggle_terrain_mode_on_key,
                 weather::tick_day_night,
                 weather::cycle_weather_on_key,
                 weather::tick_weather_blend,
                 weather::apply_weather_to_materials,
+                water::toggle_water_physics_on_key,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
                 ui::toggle_debug_overlay,
                 ui::sample_frame_stats,
                 ui::update_hud_text,

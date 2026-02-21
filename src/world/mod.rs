@@ -459,11 +459,20 @@ pub fn remesh_affected_chunks(
     ];
 
     for pos in candidates {
-        if let Some(render) = loaded.entries.get(&pos)
-            && let Some(mesh) = meshes.get_mut(&render.mesh)
-        {
-            *mesh = build_chunk_mesh_lod(pos, chunks, render.lod);
-        }
+        remesh_chunk(pos, chunks, loaded, meshes);
+    }
+}
+
+pub fn remesh_chunk(
+    pos: IVec2,
+    chunks: &HashMap<IVec2, Chunk>,
+    loaded: &LoadedChunks,
+    meshes: &mut Assets<Mesh>,
+) {
+    if let Some(render) = loaded.entries.get(&pos)
+        && let Some(mesh) = meshes.get_mut(&render.mesh)
+    {
+        *mesh = build_chunk_mesh_lod(pos, chunks, render.lod);
     }
 }
 
@@ -990,40 +999,64 @@ fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
 }
 
 fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) {
-    let radius = 16 + ((seed >> 28) & 3) as i32;
-    flatten_village_ground(chunk, cx, ground_y, cz, radius + 4);
+    let radius = 20 + ((seed >> 28) & 3) as i32;
+    flatten_village_ground(chunk, cx, ground_y, cz, radius + 6);
 
-    // Main cross roads.
-    for dz in -1..=1 {
+    // Main roads.
+    for dz in -2..=2 {
         for dx in -radius..=radius {
             set_if_inside(chunk, cx + dx, ground_y, cz + dz, Block::Dirt);
         }
     }
-    for dx in -1..=1 {
+    for dx in -2..=2 {
         for dz in -radius..=radius {
             set_if_inside(chunk, cx + dx, ground_y, cz + dz, Block::Dirt);
         }
     }
 
-    // Central marker.
-    set_if_inside(chunk, cx, ground_y + 1, cz, Block::Yellow);
+    // Ring road.
+    for dz in -radius..=radius {
+        for dx in -radius..=radius {
+            let d2 = dx * dx + dz * dz;
+            if d2 >= (radius - 2) * (radius - 2) && d2 <= radius * radius {
+                set_if_inside(chunk, cx + dx, ground_y, cz + dz, Block::Stone);
+            }
+        }
+    }
+
+    // Central square.
+    for dz in -6_i32..=6_i32 {
+        for dx in -6_i32..=6_i32 {
+            let paver = if (dx + dz).abs() % 3 == 0 { Block::Stone } else { Block::Dirt };
+            set_if_inside(chunk, cx + dx, ground_y, cz + dz, paver);
+        }
+    }
+
+    // Market marker / fountain core.
+    for y in ground_y + 1..=ground_y + 3 {
+        set_if_inside(chunk, cx, y, cz, Block::Yellow);
+    }
 
     let house_spots = [
-        IVec2::new(-11, -8),
-        IVec2::new(9, -9),
-        IVec2::new(-10, 8),
-        IVec2::new(10, 9),
-        IVec2::new(0, -15),
-        IVec2::new(14, 0),
+        IVec2::new(-15, -10),
+        IVec2::new(-7, -14),
+        IVec2::new(8, -14),
+        IVec2::new(15, -9),
+        IVec2::new(-15, 9),
+        IVec2::new(-8, 14),
+        IVec2::new(8, 14),
+        IVec2::new(14, 10),
+        IVec2::new(-2, -18),
+        IVec2::new(2, 18),
     ];
-    let count = 3 + ((seed >> 20) & 0x3) as usize;
+    let count = 6 + ((seed >> 20) & 0x3) as usize;
     for i in 0..count.min(house_spots.len()) {
-        let idx = ((i as u32 * 3 + (seed >> 5)) as usize) % house_spots.len();
+        let idx = ((i as u32 * 5 + (seed >> 5)) as usize) % house_spots.len();
         let spot = house_spots[idx];
         let hw = 4 + ((seed >> (i + 2)) & 1) as i32;
-        let hd = 4 + ((seed >> (i + 7)) & 1) as i32;
-        let hh = 4 + ((seed >> (i + 11)) & 1) as i32;
-        place_house(chunk, cx + spot.x, ground_y + 1, cz + spot.y, hw, hd, hh, seed ^ i as u32);
+        let hd = 4 + ((seed >> (i + 8)) & 1) as i32;
+        let hh = 4 + ((seed >> (i + 12)) & 2) as i32;
+        place_house(chunk, cx + spot.x, ground_y + 1, cz + spot.y, hw, hd, hh.clamp(4, 7), seed ^ i as u32);
     }
 }
 
@@ -1203,7 +1236,7 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     let center = city_center(noise.seed);
     let cx = center.x;
     let cz = center.y;
-    let influence = 92;
+    let influence = 136;
 
     let chunk_min_x = chunk.pos.x * CHUNK_SIZE as i32;
     let chunk_max_x = chunk_min_x + CHUNK_SIZE as i32 - 1;
@@ -1220,61 +1253,80 @@ fn stamp_megacity(chunk: &mut Chunk, noise: &TerrainNoise) {
     let base_y = (sample_surface(noise, cx, cz).height as i32 + 1).clamp(SEA_LEVEL + 7, WORLD_HEIGHT as i32 - 70);
     flatten_village_ground(chunk, cx, base_y, cz, influence);
 
-    // Dense road grid.
-    for z in -66..=66 {
-        for x in -66..=66 {
-            if x % 12 == 0 || z % 12 == 0 {
-                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
-            } else if (x + z) % 17 == 0 {
+    // Hierarchical roads: big avenues + smaller cross streets.
+    for z in -112_i32..=112_i32 {
+        for x in -112_i32..=112_i32 {
+            let ax = x.rem_euclid(24);
+            let az = z.rem_euclid(24);
+            let sx = x.rem_euclid(12);
+            let sz = z.rem_euclid(12);
+            let on_avenue = ax <= 2 || ax >= 22 || az <= 2 || az >= 22;
+            let on_street = sx == 0 || sz == 0;
+
+            if on_avenue {
+                let lane = if (x + z).abs() % 6 == 0 { Block::Stone } else { Block::Dirt };
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, lane);
+            } else if on_street {
                 set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
             }
         }
     }
 
-    // Ring avenue.
-    for z in -72..=72 {
-        for x in -72..=72 {
+    // Ring avenues.
+    for z in -126_i32..=126_i32 {
+        for x in -126_i32..=126_i32 {
             let d2 = x * x + z * z;
-            if d2 >= 66 * 66 && d2 <= 72 * 72 {
+            if (118 * 118..=126 * 126).contains(&d2) {
                 set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Stone);
+            }
+            if (92 * 92..=98 * 98).contains(&d2) {
+                set_if_inside(chunk, cx + x, base_y + 1, cz + z, Block::Dirt);
             }
         }
     }
 
     // Building lots.
-    for gz in -5..=5 {
-        for gx in -5..=5 {
-            if gx == 0 && gz == 0 {
+    for gz in -9_i32..=9_i32 {
+        for gx in -9_i32..=9_i32 {
+            if gx.abs() <= 1 && gz.abs() <= 1 {
                 continue;
             }
             let lot_hash = hash3(gx, gz, noise.seed ^ 0xBB10_6237);
-            if lot_hash & 7 == 0 {
+            if lot_hash & 0xF == 0 {
                 continue;
             }
-            let lot_cx = cx + gx * 12 + (((lot_hash >> 3) & 1) as i32 - ((lot_hash >> 4) & 1) as i32);
-            let lot_cz = cz + gz * 12 + (((lot_hash >> 5) & 1) as i32 - ((lot_hash >> 6) & 1) as i32);
-            let hw = 3 + ((lot_hash >> 8) & 0x3) as i32;
-            let hd = 3 + ((lot_hash >> 10) & 0x3) as i32;
+            let lot_cx = cx + gx * 12 + (((lot_hash >> 3) & 3) as i32 - 1);
+            let lot_cz = cz + gz * 12 + (((lot_hash >> 5) & 3) as i32 - 1);
+            let hw = 3 + ((lot_hash >> 8) & 0x2) as i32;
+            let hd = 3 + ((lot_hash >> 10) & 0x2) as i32;
 
             let radial = ((gx * gx + gz * gz) as f32).sqrt();
-            let core_boost = (7.0 - radial).max(0.0) * 5.0;
+            let core_boost = (10.0 - radial).max(0.0) * 4.5;
             let h = 14 + ((lot_hash >> 14) & 0x1F) as i32 + core_boost as i32;
-            let height = h.clamp(12, 58);
+            let height = h.clamp(16, 72);
 
             place_skyscraper(chunk, lot_cx, base_y + 2, lot_cz, hw, hd, height, lot_hash);
         }
     }
 
     // Signature supertalls.
-    for (i, (tx, tz)) in [(cx + 10, cz - 8), (cx - 15, cz + 9), (cx + 2, cz + 18)].into_iter().enumerate() {
+    for (i, (tx, tz)) in [
+        (cx + 16, cz - 12),
+        (cx - 18, cz + 14),
+        (cx + 3, cz + 24),
+        (cx - 5, cz - 26),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         place_skyscraper(
             chunk,
             tx,
             base_y + 2,
             tz,
-            5 - (i as i32 % 2),
-            5,
-            62 - (i as i32 * 4),
+            5 + (i as i32 % 2),
+            5 + ((i as i32 + 1) % 2),
+            74 - (i as i32 * 5),
             hash3(tx, tz, noise.seed ^ 0xD4A1_9943),
         );
     }
@@ -1386,6 +1438,69 @@ fn place_skyscraper(
                 } else {
                     set_if_inside(chunk, wx, y, wz, Block::Air);
                 }
+            }
+        }
+    }
+
+    // Entry doors on opposite sides.
+    for y in base_y + 1..=base_y + 3 {
+        for x in -1..=1 {
+            set_if_inside(chunk, cx + x, y, cz - hd, Block::Air);
+            set_if_inside(chunk, cx + x, y, cz + hd, Block::Air);
+        }
+    }
+
+    // Interior floor plates every few levels, with a wider stair core opening.
+    let floor_step = 6;
+    for y in ((base_y + 1)..(base_y + height)).step_by(floor_step as usize) {
+        for z in -(hd - 1)..=(hd - 1) {
+            for x in -(hw - 1)..=(hw - 1) {
+                // Keep a 5x5 void in center for stairs/shaft.
+                if x.abs() <= 2 && z.abs() <= 2 {
+                    continue;
+                }
+                let mat = if (x + z + y).abs() % 5 == 0 { Block::Stone } else { Block::Wood };
+                set_if_inside(chunk, cx + x, y, cz + z, mat);
+            }
+        }
+    }
+
+    // Carve shaft for headroom and cleaner navigation.
+    for y in base_y + 1..=base_y + height {
+        for z in -2..=2 {
+            for x in -2..=2 {
+                set_if_inside(chunk, cx + x, y, cz + z, Block::Air);
+            }
+        }
+    }
+
+    // Wider switchback stairs + periodic landings.
+    for y in base_y + 1..=base_y + height - 1 {
+        let phase = (y - (base_y + 1)).rem_euclid(8);
+        let (sx, sz) = match phase {
+            0 => (2, -1),
+            1 => (2, 0),
+            2 => (2, 1),
+            3 => (1, 2),
+            4 => (0, 2),
+            5 => (-1, 2),
+            6 => (-2, 1),
+            _ => (-2, 0),
+        };
+        set_if_inside(chunk, cx + sx, y, cz + sz, Block::Stone);
+        // Two-wide step to make traversal more forgiving.
+        if sx.abs() >= sz.abs() {
+            set_if_inside(chunk, cx + sx, y, cz + sz.signum(), Block::Stone);
+        } else {
+            set_if_inside(chunk, cx + sx.signum(), y, cz + sz, Block::Stone);
+        }
+        set_if_inside(chunk, cx + sx, y + 1, cz + sz, Block::Air);
+
+        // Landing links from stair to floor plate.
+        if (y - (base_y + 1)).rem_euclid(floor_step) == 0 {
+            for t in 3..=4 {
+                set_if_inside(chunk, cx + sx * t, y, cz + sz * t, Block::Wood);
+                set_if_inside(chunk, cx + sx * t, y + 1, cz + sz * t, Block::Air);
             }
         }
     }

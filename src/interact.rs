@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
+use bevy::input::{ButtonState, mouse::MouseButtonInput};
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
 use crate::net_client::NetClientState;
 use crate::player::{collides_player, FlyCam};
 use crate::world::{
-    div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
+    div_floor, get_block_world, remesh_chunk, set_block_world, Block, LoadedChunks, VoxelWorld,
 };
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -93,7 +94,7 @@ pub fn cycle_palette_on_scroll(
 }
 
 pub fn break_targeted_block(
-    buttons: Res<ButtonInput<MouseButton>>,
+    mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
@@ -111,7 +112,10 @@ pub fn break_targeted_block(
     if prompt.active {
         return;
     }
-    if !buttons.just_pressed(MouseButton::Left) {
+    let mouse_break = mouse_events
+        .read()
+        .any(|e| e.button == MouseButton::Left && e.state == ButtonState::Pressed);
+    if !mouse_break {
         return;
     }
 
@@ -130,12 +134,12 @@ pub fn break_targeted_block(
             z: hit.solid.z,
             block: Block::Air,
         });
-        remesh_at_cell(hit.solid, &world.chunks, &loaded, &mut meshes);
+        remesh_at_cell_immediate(hit.solid, &world.chunks, &loaded, &mut meshes);
     }
 }
 
 pub fn place_targeted_block(
-    buttons: Res<ButtonInput<MouseButton>>,
+    mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
@@ -154,7 +158,10 @@ pub fn place_targeted_block(
     if prompt.active {
         return;
     }
-    if !buttons.just_pressed(MouseButton::Right) {
+    let mouse_place = mouse_events
+        .read()
+        .any(|e| e.button == MouseButton::Right && e.state == ButtonState::Pressed);
+    if !mouse_place {
         return;
     }
 
@@ -197,7 +204,7 @@ pub fn place_targeted_block(
         return;
     }
 
-    remesh_at_cell(hit.previous_air, &world.chunks, &loaded, &mut meshes);
+    remesh_at_cell_immediate(hit.previous_air, &world.chunks, &loaded, &mut meshes);
     edits.send(LocalBlockEditEvent {
         x: hit.previous_air.x,
         y: hit.previous_air.y,
@@ -228,7 +235,7 @@ pub fn highlight_targeted_block(
     gizmos.cuboid(transform, Color::srgba(0.95, 0.95, 0.95, 0.95));
 }
 
-fn remesh_at_cell(
+fn remesh_at_cell_immediate(
     cell: IVec3,
     chunks: &std::collections::HashMap<IVec2, crate::world::Chunk>,
     loaded: &LoadedChunks,
@@ -238,7 +245,7 @@ fn remesh_at_cell(
         div_floor(cell.x, CHUNK_SIZE as i32),
         div_floor(cell.z, CHUNK_SIZE as i32),
     );
-    remesh_affected_chunks(chunk, chunks, loaded, meshes);
+    remesh_chunk(chunk, chunks, loaded, meshes);
 }
 
 fn raycast_blocks(

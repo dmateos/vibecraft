@@ -12,7 +12,7 @@ use crate::net_client::NetClientState;
 use crate::npc::{DeadNpcCells, LoadedNpcs, Npc};
 use crate::player::FlyCam;
 use crate::world::{
-    div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
+    div_floor, get_block_world, remesh_chunk, set_block_world, Block, LoadedChunks, VoxelWorld,
 };
 
 const GUN_RANGE: f32 = BREAK_REACH * 2.3;
@@ -25,7 +25,7 @@ const GRENADE_RADIUS: i32 = 4;
 const MUZZLE_FLASH_TIME: f32 = 0.045;
 const EXPLOSION_FX_TIME: f32 = 0.34;
 const EXPLOSION_EDITS_PER_TICK: usize = 320;
-const EXPLOSION_REMESHES_PER_TICK: usize = 8;
+const EXPLOSION_REMESHES_PER_TICK: usize = 1;
 const GUN_DAMAGE: f32 = 34.0;
 
 #[derive(Component)]
@@ -249,7 +249,7 @@ pub fn fire_gun_on_key(
     assets: Res<WeaponAssets>,
     prompt: Res<PromptInputState>,
 ) {
-    if prompt.active || !keys.just_pressed(KeyCode::KeyZ) {
+    if prompt.active || !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
 
@@ -539,7 +539,7 @@ pub fn process_dirty_chunk_remeshes(
             break;
         };
         work.dirty_set.remove(&chunk);
-        remesh_affected_chunks(chunk, &world.chunks, &loaded, &mut meshes);
+        remesh_chunk(chunk, &world.chunks, &loaded, &mut meshes);
         count += 1;
     }
 }
@@ -598,8 +598,17 @@ fn enqueue_explosion(work: &mut ExplosionWorkQueue, center: IVec3, radius: i32) 
 }
 
 fn mark_dirty_chunk(work: &mut ExplosionWorkQueue, chunk: IVec2) {
-    if work.dirty_set.insert(chunk) {
-        work.dirty_order.push_back(chunk);
+    let candidates = [
+        chunk,
+        chunk + IVec2::new(1, 0),
+        chunk + IVec2::new(-1, 0),
+        chunk + IVec2::new(0, 1),
+        chunk + IVec2::new(0, -1),
+    ];
+    for c in candidates {
+        if work.dirty_set.insert(c) {
+            work.dirty_order.push_back(c);
+        }
     }
 }
 
@@ -640,7 +649,7 @@ fn remesh_for_cells(
     }
 
     for chunk in touched {
-        remesh_affected_chunks(chunk, chunks, loaded, meshes);
+        remesh_chunk(chunk, chunks, loaded, meshes);
     }
 }
 

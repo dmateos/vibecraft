@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::math::primitives::Cuboid;
 use bevy::prelude::*;
-use bevy::input::mouse::MouseButton;
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 use crate::generation::PromptInputState;
@@ -32,6 +31,8 @@ const FRIENDLY_VISION_DOT: f32 = -0.40;
 const HOSTILE_HEARING_RANGE: f32 = 52.0;
 const NPC_SIGHT_MEMORY: f32 = 3.0;
 const NPC_INVESTIGATE_MEMORY: f32 = 4.5;
+const CITY_SETTLEMENT_RADIUS: f32 = 116.0;
+const VILLAGE_SETTLEMENT_RADIUS: f32 = 26.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NpcKind {
@@ -61,6 +62,8 @@ pub struct Npc {
     pub stuck_timer: f32,
     pub knockback_velocity: Vec3,
     pub hurt_stun: f32,
+    pub home_center: Vec2,
+    pub home_radius: f32,
 }
 
 #[derive(Component)]
@@ -327,11 +330,12 @@ pub fn stream_npcs_around_camera(
             continue;
         };
 
+        let home = settlement_anchor_for_position(world.seed, wx, wz);
         let heading = ((seed >> 16) as f32 / u16::MAX as f32) * std::f32::consts::TAU;
-        let kind = if ((seed >> 24) & 0xFF) > 215 {
-            NpcKind::Hostile
-        } else {
+        let kind = if home.is_some() && ((seed >> 24) & 0xFF) < 205 {
             NpcKind::Friendly
+        } else {
+            NpcKind::Hostile
         };
         let speed = match kind {
             NpcKind::Friendly => 0.62 + ((seed >> 20) as f32 / 255.0) * 0.48,
@@ -378,6 +382,8 @@ pub fn stream_npcs_around_camera(
                     stuck_timer: 0.0,
                     knockback_velocity: Vec3::ZERO,
                     hurt_stun: 0.0,
+                    home_center: home.map(|h| h.0).unwrap_or(Vec2::new(wx as f32 + 0.5, wz as f32 + 0.5)),
+                    home_radius: home.map(|h| h.1).unwrap_or(24.0),
                 },
             ))
             .id();
@@ -555,7 +561,6 @@ pub fn stream_npcs_around_camera(
 pub fn capture_player_noise(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
     prompt: Res<PromptInputState>,
     net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
@@ -574,10 +579,7 @@ pub fn capture_player_noise(
     }
 
     let mut loud = false;
-    if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::KeyZ) {
-        loud = true;
-    }
-    if buttons.just_pressed(MouseButton::Left) {
+    if keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::KeyE) {
         loud = true;
     }
     if !loud {
@@ -737,6 +739,15 @@ pub fn tick_npcs(
         let mut desired_dir = Vec2::new(npc.heading.cos(), npc.heading.sin());
         match npc.kind {
             NpcKind::Friendly => {
+                let to_home = npc.home_center - transform.translation.xz();
+                let dist_home = to_home.length();
+                if dist_home > npc.home_radius + 4.0 {
+                    desired_dir = to_home.normalize_or_zero();
+                    npc.follow_player = false;
+                } else if dist_home > npc.home_radius - 1.5 && !npc.follow_player {
+                    desired_dir = to_home.normalize_or_zero();
+                }
+
                 if npc.follow_player {
                     if player_dist > 2.4 {
                         desired_dir = to_player.xz().normalize_or_zero();
@@ -883,6 +894,12 @@ pub fn tick_npcs(
         }
 
         transform.translation = pos;
+        if npc.kind == NpcKind::Friendly {
+            let clamped = clamp_to_home(pos, npc.home_center, npc.home_radius + 1.0);
+            if clamped != pos {
+                transform.translation = clamped;
+            }
+        }
         let yaw = -npc.heading
             + std::f32::consts::FRAC_PI_2
             + if rig.quadruped { std::f32::consts::PI } else { 0.0 };
@@ -1033,6 +1050,18 @@ fn enters_water(chunks: &HashMap<IVec2, Chunk>, x: i32, z: i32) -> bool {
     }
 }
 
+fn clamp_to_home(pos: Vec3, center: Vec2, radius: f32) -> Vec3 {
+    let mut p = pos;
+    let d = p.xz() - center;
+    let len = d.length();
+    if len > radius && len > 0.001 {
+        let on_edge = center + d / len * radius;
+        p.x = on_edge.x;
+        p.z = on_edge.y;
+    }
+    p
+}
+
 fn collides_npc(chunks: &HashMap<IVec2, Chunk>, feet: Vec3) -> bool {
     let min = Vec3::new(feet.x - NPC_RADIUS, feet.y, feet.z - NPC_RADIUS);
     let max = Vec3::new(feet.x + NPC_RADIUS, feet.y + NPC_HEIGHT, feet.z + NPC_RADIUS);
@@ -1178,6 +1207,61 @@ fn is_solid(block: Block) -> bool {
 fn should_spawn_cell(cell: IVec2, seed: u32) -> bool {
     let h = hash3(cell.x, cell.y, seed ^ 0x736E_7063);
     (h & 0xFF) >= 182
+}
+
+fn settlement_anchor_for_position(seed: u32, x: i32, z: i32) -> Option<(Vec2, f32)> {
+    let city = city_center(seed);
+    let city_v = Vec2::new(city.x as f32, city.y as f32);
+    let p = Vec2::new(x as f32, z as f32);
+    if p.distance(city_v) <= CITY_SETTLEMENT_RADIUS {
+        return Some((city_v, CITY_SETTLEMENT_RADIUS));
+    }
+
+    const VILLAGE_CELL: i32 = 64;
+    let gx = div_floor(x, VILLAGE_CELL);
+    let gz = div_floor(z, VILLAGE_CELL);
+    for cz in (gz - 2)..=(gz + 2) {
+        for cx in (gx - 2)..=(gx + 2) {
+            let h = hash3(cx, cz, seed ^ 0x51AA_92F1);
+            let guaranteed_origin = cx == 0 && cz == 0;
+            if !guaranteed_origin && (h & 0xFF) < 196 {
+                continue;
+            }
+
+            let vx = cx * VILLAGE_CELL + (((h >> 8) as i32 & 63) - 32);
+            let vz = cz * VILLAGE_CELL + (((h >> 16) as i32 & 63) - 32);
+            let center = Vec2::new(vx as f32, vz as f32);
+            if p.distance(center) <= VILLAGE_SETTLEMENT_RADIUS {
+                return Some((center, VILLAGE_SETTLEMENT_RADIUS));
+            }
+        }
+    }
+
+    None
+}
+
+#[inline]
+fn monument_center(seed: u32) -> IVec2 {
+    let radius = 104.0 + ((seed >> 5) & 63) as f32;
+    let angle = ((seed.rotate_left(9) as f32) / (u32::MAX as f32)) * std::f32::consts::TAU;
+    IVec2::new((angle.cos() * radius).round() as i32, (angle.sin() * radius).round() as i32)
+}
+
+#[inline]
+fn city_center(seed: u32) -> IVec2 {
+    let monument = monument_center(seed);
+    let m = Vec2::new(monument.x as f32, monument.y as f32);
+    let mdir = if m.length_squared() > 1.0 {
+        m.normalize()
+    } else {
+        Vec2::new(1.0, 0.0)
+    };
+    let side = if (seed & 1) == 0 { 1.0 } else { -1.0 };
+    let perp = Vec2::new(-mdir.y, mdir.x) * side;
+    let outward = mdir * (34.0 + ((seed >> 11) & 31) as f32);
+    let lateral = perp * (152.0 + ((seed >> 7) & 31) as f32);
+    let c = m + outward + lateral;
+    IVec2::new(c.x.round() as i32, c.y.round() as i32)
 }
 
 #[inline]

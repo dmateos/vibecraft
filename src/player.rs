@@ -25,7 +25,6 @@ pub fn camera_look(
     mut windows: Query<&mut Window>,
     mut motion: EventReader<MouseMotion>,
     mut q: Query<(&mut Transform, &mut FlyCam)>,
-    mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     prompt: Res<PromptInputState>,
 ) {
@@ -46,7 +45,7 @@ pub fn camera_look(
         window.cursor.visible = true;
         window.cursor.grab_mode = CursorGrabMode::None;
     }
-    if mouse.just_pressed(MouseButton::Left) {
+    if keys.just_pressed(KeyCode::Tab) && window.cursor.grab_mode != CursorGrabMode::Locked {
         window.cursor.visible = false;
         window.cursor.grab_mode = CursorGrabMode::Locked;
     }

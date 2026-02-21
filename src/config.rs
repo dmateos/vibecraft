@@ -12,6 +12,6 @@ pub const JUMP_SPEED: f32 = 11.0;
 pub const PLAYER_RADIUS: f32 = 0.35;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 pub const EYE_HEIGHT: f32 = 1.62;
-pub const STEP_HEIGHT: f32 = 0.6;
+pub const STEP_HEIGHT: f32 = 0.9;
 
 pub const BREAK_REACH: f32 = 6.5;
