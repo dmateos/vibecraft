@@ -3,6 +3,7 @@ mod config;
 mod generation;
 mod interact;
 mod materials;
+mod net_client;
 mod npc;
 mod player;
 mod sky;
@@ -27,8 +28,9 @@ use player::FlyCam;
 use world::{LoadedChunks, StreamTimer, TerrainMode, VoxelWorld};
 
 fn main() {
-    App::new()
-        .insert_resource(Msaa::Off)
+    let net_cfg = net_client::NetClientConfig::from_args();
+    let mut app = App::new();
+    app.insert_resource(Msaa::Off)
         .insert_resource(ClearColor(Color::srgb(0.40, 0.72, 0.96)))
         .insert_resource(AmbientLight {
             color: Color::WHITE,
@@ -71,6 +73,7 @@ fn main() {
         .insert_resource(interact::PlacementPalette::default())
         .insert_resource(ui::DebugOverlayState::default())
         .insert_resource(ui::FrameStats::default())
+        .add_event::<interact::LocalBlockEditEvent>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "VibeCraft".to_string(),
@@ -146,8 +149,30 @@ fn main() {
                 ui::update_hud_text,
                 ui::update_debug_hud_text,
             ),
-        )
-        .run();
+        );
+
+    if net_cfg.enabled {
+        info!(
+            "network client enabled: connect={} name={}",
+            net_cfg
+                .server
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "<none>".to_string()),
+            net_cfg.name
+        );
+        app.insert_resource(net_client::NetClientState::new(net_cfg))
+            .add_systems(Startup, net_client::setup_net_client)
+            .add_systems(Startup, net_client::setup_net_visual_assets)
+            .add_systems(Update, net_client::tick_net_client);
+        app.add_systems(Update, net_client::apply_remote_block_edits)
+            .add_systems(Update, net_client::sync_remote_entities)
+            .add_systems(Update, net_client::spawn_net_fx)
+            .add_systems(Update, net_client::tick_net_fx);
+    } else {
+        info!("network client disabled (local mode)");
+    }
+
+    app.run();
 }
 
 fn setup(

@@ -6,6 +6,7 @@ use bevy::input::mouse::MouseButton;
 
 use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 use crate::generation::PromptInputState;
+use crate::net_client::NetClientState;
 use crate::player::FlyCam;
 use crate::ui::DebugOverlayState;
 use crate::world::{chunk_distance_sq, div_floor, get_block_world, Block, Chunk, VoxelWorld};
@@ -213,10 +214,19 @@ pub fn stream_npcs_around_camera(
     mut loaded: ResMut<LoadedNpcs>,
     dead_cells: Res<DeadNpcCells>,
     npc_state_q: Query<&Npc>,
+    net: Option<Res<NetClientState>>,
     world: Res<VoxelWorld>,
     assets: Res<NpcAssets>,
     cam_q: Query<&Transform, With<FlyCam>>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+        && !net.is_authority()
+    {
+        loaded.clear_and_despawn(&mut commands);
+        return;
+    }
     if !timer.0.tick(time.delta()).just_finished() {
         return;
     }
@@ -547,9 +557,17 @@ pub fn capture_player_noise(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     prompt: Res<PromptInputState>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut stim: ResMut<NpcStimulus>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+        && !net.is_authority()
+    {
+        return;
+    }
     stim.ttl = (stim.ttl - time.delta_seconds()).max(0.0);
     if prompt.active {
         return;
@@ -576,10 +594,18 @@ pub fn capture_player_noise(
 pub fn npc_interactions(
     keys: Res<ButtonInput<KeyCode>>,
     prompt: Res<PromptInputState>,
+    net: Option<Res<NetClientState>>,
     mut npcs: Query<(&Transform, &mut Npc)>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut ui: ResMut<NpcUiState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+        && !net.is_authority()
+    {
+        return;
+    }
     if prompt.active || !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
@@ -629,6 +655,7 @@ pub fn npc_interactions(
 pub fn tick_npcs(
     time: Res<Time>,
     world: Res<VoxelWorld>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, (With<FlyCam>, Without<Npc>)>,
     mut ui: ResMut<NpcUiState>,
     mut vitals: ResMut<PlayerVitals>,
@@ -638,6 +665,13 @@ pub fn tick_npcs(
         Query<&mut Transform, (Without<Npc>, Without<FlyCam>)>,
     )>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+        && !net.is_authority()
+    {
+        return;
+    }
     let Ok(cam) = cam_q.get_single() else {
         return;
     };
