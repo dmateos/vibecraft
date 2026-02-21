@@ -3,10 +3,19 @@ use bevy::input::mouse::MouseWheel;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
+use crate::net_client::NetClientState;
 use crate::player::{collides_player, FlyCam};
 use crate::world::{
     div_floor, get_block_world, remesh_affected_chunks, set_block_world, Block, LoadedChunks, VoxelWorld,
 };
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct LocalBlockEditEvent {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub block: Block,
+}
 
 #[derive(Clone, Copy)]
 struct BlockHit {
@@ -85,12 +94,20 @@ pub fn cycle_palette_on_scroll(
 
 pub fn break_targeted_block(
     buttons: Res<ButtonInput<MouseButton>>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+    {
+        return;
+    }
     if prompt.active {
         return;
     }
@@ -107,19 +124,33 @@ pub fn break_targeted_block(
     };
 
     if set_block_world(&mut world.chunks, hit.solid.x, hit.solid.y, hit.solid.z, Block::Air) {
+        edits.send(LocalBlockEditEvent {
+            x: hit.solid.x,
+            y: hit.solid.y,
+            z: hit.solid.z,
+            block: Block::Air,
+        });
         remesh_at_cell(hit.solid, &world.chunks, &loaded, &mut meshes);
     }
 }
 
 pub fn place_targeted_block(
     buttons: Res<ButtonInput<MouseButton>>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut world: ResMut<VoxelWorld>,
     loaded: Res<LoadedChunks>,
     mut meshes: ResMut<Assets<Mesh>>,
     palette: Res<PlacementPalette>,
+    mut edits: EventWriter<LocalBlockEditEvent>,
     prompt: Res<PromptInputState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+    {
+        return;
+    }
     if prompt.active {
         return;
     }
@@ -167,6 +198,12 @@ pub fn place_targeted_block(
     }
 
     remesh_at_cell(hit.previous_air, &world.chunks, &loaded, &mut meshes);
+    edits.send(LocalBlockEditEvent {
+        x: hit.previous_air.x,
+        y: hit.previous_air.y,
+        z: hit.previous_air.z,
+        block: palette.selected_block(),
+    });
 }
 
 pub fn highlight_targeted_block(

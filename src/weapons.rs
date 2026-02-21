@@ -7,6 +7,8 @@ use bevy::ecs::query::QueryFilter;
 
 use crate::config::{BREAK_REACH, CHUNK_SIZE};
 use crate::generation::PromptInputState;
+use crate::interact::LocalBlockEditEvent;
+use crate::net_client::NetClientState;
 use crate::npc::{DeadNpcCells, LoadedNpcs, Npc};
 use crate::player::FlyCam;
 use crate::world::{
@@ -240,6 +242,7 @@ pub fn ensure_view_gun(
 
 pub fn fire_gun_on_key(
     keys: Res<ButtonInput<KeyCode>>,
+    net: Option<Res<NetClientState>>,
     mut cam_q: Query<(&mut Transform, &mut FlyCam)>,
     view_gun_q: Query<Entity, With<ViewGun>>,
     mut commands: Commands,
@@ -254,23 +257,29 @@ pub fn fire_gun_on_key(
         return;
     };
 
-    let forward = *cam_transform.forward();
-    let spawn = cam_transform.translation + forward * 0.85 + Vec3::new(0.0, -0.10, 0.0);
-    let velocity = forward * BULLET_SPEED;
+    let online = net
+        .as_ref()
+        .map(|n| n.cfg.enabled && n.connected)
+        .unwrap_or(false);
+    if !online {
+        let forward = *cam_transform.forward();
+        let spawn = cam_transform.translation + forward * 0.85 + Vec3::new(0.0, -0.10, 0.0);
+        let velocity = forward * BULLET_SPEED;
 
-    commands.spawn((
-        PbrBundle {
-            mesh: assets.bullet_mesh.clone(),
-            material: assets.bullet_material.clone(),
-            transform: Transform::from_translation(spawn),
-            ..default()
-        },
-        Bullet {
-            velocity,
-            life: BULLET_LIFE,
-        },
-        NotShadowCaster,
-    ));
+        commands.spawn((
+            PbrBundle {
+                mesh: assets.bullet_mesh.clone(),
+                material: assets.bullet_material.clone(),
+                transform: Transform::from_translation(spawn),
+                ..default()
+            },
+            Bullet {
+                velocity,
+                life: BULLET_LIFE,
+            },
+            NotShadowCaster,
+        ));
+    }
 
     // Recoil kick.
     cam_ctrl.pitch = (cam_ctrl.pitch + 0.030).clamp(-1.54, 1.54);
@@ -310,6 +319,7 @@ pub fn tick_bullets(
     loaded: Res<LoadedChunks>,
     _loaded_npcs: ResMut<LoadedNpcs>,
     mut dead_cells: ResMut<DeadNpcCells>,
+    mut block_edits: EventWriter<LocalBlockEditEvent>,
     mut npc_q: ParamSet<(
         Query<(Entity, &Transform, &Npc), Without<Bullet>>,
         Query<(&mut Npc, &mut Transform), Without<Bullet>>,
@@ -367,6 +377,12 @@ pub fn tick_bullets(
 
         if let Some((hit, _)) = block_hit {
             if set_block_world(&mut world.chunks, hit.x, hit.y, hit.z, Block::Air) {
+                block_edits.send(LocalBlockEditEvent {
+                    x: hit.x,
+                    y: hit.y,
+                    z: hit.z,
+                    block: Block::Air,
+                });
                 remesh_for_cells(
                     [IVec3::new(hit.x, hit.y, hit.z)].into_iter(),
                     &world.chunks,
@@ -384,11 +400,19 @@ pub fn tick_bullets(
 
 pub fn throw_grenade_on_key(
     keys: Res<ButtonInput<KeyCode>>,
+    net: Option<Res<NetClientState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut commands: Commands,
     assets: Res<WeaponAssets>,
     prompt: Res<PromptInputState>,
 ) {
+    if let Some(net) = net
+        && net.cfg.enabled
+        && net.connected
+    {
+        // In network mode, server is authoritative for grenade explosions.
+        return;
+    }
     if prompt.active || !keys.just_pressed(KeyCode::KeyQ) {
         return;
     }
@@ -465,6 +489,7 @@ pub fn tick_grenades(
 pub fn process_explosion_jobs(
     mut work: ResMut<ExplosionWorkQueue>,
     mut world: ResMut<VoxelWorld>,
+    mut block_edits: EventWriter<LocalBlockEditEvent>,
 ) {
     let mut budget = EXPLOSION_EDITS_PER_TICK;
 
@@ -479,6 +504,12 @@ pub fn process_explosion_jobs(
             budget -= 1;
 
             if set_block_world(&mut world.chunks, cell.x, cell.y, cell.z, Block::Air) {
+                block_edits.send(LocalBlockEditEvent {
+                    x: cell.x,
+                    y: cell.y,
+                    z: cell.z,
+                    block: Block::Air,
+                });
                 mark_dirty_chunk(
                     &mut work,
                     IVec2::new(

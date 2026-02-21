@@ -34,6 +34,40 @@ It focuses on:
 cargo run
 ```
 
+## Multiplayer Draft Scaffold
+
+This repo now includes an initial dedicated-server scaffold and protocol draft:
+- Design doc: `docs/MULTIPLAYER_DRAFT.md`
+- Shared protocol types: `src/net/protocol.rs`
+- Shared sim/net mapping helpers: `src/core_sim/net_map.rs`
+- Draft server binary: `src/bin/server.rs`
+
+Run the draft server scaffold:
+
+```bash
+cargo run --bin server -- --bind 0.0.0.0:40000 --seed 1337 --tick-hz 20
+```
+
+Run the draft test client (separate terminal):
+
+```bash
+cargo run --bin net_client -- --server 127.0.0.1:40000 --name tester1
+```
+
+Current status:
+- UDP transport wired
+- `Hello` / `Welcome` handshake wired
+- periodic snapshot broadcast wired
+- test client prints received snapshots
+
+Use the main game binary as a networked client:
+
+```bash
+cargo run -- --connect 127.0.0.1:40000 --name player1
+```
+
+If `--connect` is omitted, the game runs in normal local mode.
+
 ## Controls
 
 ### Movement / camera
