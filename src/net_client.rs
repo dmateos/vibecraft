@@ -154,12 +154,12 @@ pub struct NetVisualAssets {
 
 #[derive(Component)]
 struct RemotePlayer {
-    client_id: ClientId,
+    _client_id: ClientId,
 }
 
 #[derive(Component)]
 struct RemoteNpc {
-    net_id: u64,
+    _net_id: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -645,7 +645,7 @@ pub fn sync_remote_entities(
                         ..default()
                     },
                     RemotePlayer {
-                        client_id: p.client_id,
+                        _client_id: p.client_id,
                     },
                 ))
                 .id();
@@ -712,7 +712,7 @@ pub fn sync_remote_entities(
                         ..default()
                     },
                     RemoteNpc {
-                        net_id: n.entity_id,
+                        _net_id: n.entity_id,
                     },
                 ))
                 .id();
