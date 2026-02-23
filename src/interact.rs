@@ -140,6 +140,7 @@ pub fn cycle_palette_on_scroll(
 pub fn break_targeted_block(
     mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     world: Res<VoxelWorld>,
     mut inv: ResMut<BlockInventory>,
@@ -147,6 +148,10 @@ pub fn break_targeted_block(
     prompt: Res<PromptInputState>,
 ) {
     if is_remote_simulation(net.as_deref()) {
+        return;
+    }
+    if rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false) {
+        mouse_events.clear();
         return;
     }
     if prompt.active {
@@ -187,6 +192,7 @@ pub fn break_targeted_block(
 pub fn place_targeted_block(
     mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     world: Res<VoxelWorld>,
     palette: Res<PlacementPalette>,
@@ -195,6 +201,10 @@ pub fn place_targeted_block(
     prompt: Res<PromptInputState>,
 ) {
     if is_remote_simulation(net.as_deref()) {
+        return;
+    }
+    if rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false) {
+        mouse_events.clear();
         return;
     }
     if prompt.active {
@@ -253,9 +263,13 @@ pub fn place_targeted_block(
 
 pub fn highlight_targeted_block(
     mut gizmos: Gizmos,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     world: Res<VoxelWorld>,
 ) {
+    if rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false) {
+        return;
+    }
     let Ok(cam) = cam_q.get_single() else {
         return;
     };

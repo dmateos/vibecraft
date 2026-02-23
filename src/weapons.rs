@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 
 use bevy::ecs::query::QueryFilter;
+use bevy::input::{ButtonState, mouse::MouseButtonInput};
 use bevy::math::primitives::Cuboid;
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
@@ -241,14 +242,26 @@ pub fn ensure_view_gun(
 
 pub fn fire_gun_on_key(
     keys: Res<ButtonInput<KeyCode>>,
+    mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     mut cam_q: Query<(&mut Transform, &mut FlyCam)>,
     view_gun_q: Query<Entity, With<ViewGun>>,
     mut commands: Commands,
     assets: Res<WeaponAssets>,
     prompt: Res<PromptInputState>,
 ) {
-    if prompt.active || !keys.just_pressed(KeyCode::KeyE) {
+    let mounted = rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false);
+    let mouse_fire = if mounted {
+        mouse_events
+            .read()
+            .any(|e| e.button == MouseButton::Left && e.state == ButtonState::Pressed)
+    } else {
+        mouse_events.clear();
+        false
+    };
+
+    if prompt.active || !(keys.just_pressed(KeyCode::KeyE) || mouse_fire) {
         return;
     }
 
@@ -391,7 +404,9 @@ pub fn tick_bullets(
 
 pub fn throw_grenade_on_key(
     keys: Res<ButtonInput<KeyCode>>,
+    mut mouse_events: EventReader<MouseButtonInput>,
     net: Option<Res<NetClientState>>,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     cam_q: Query<&Transform, With<FlyCam>>,
     mut commands: Commands,
     assets: Res<WeaponAssets>,
@@ -401,7 +416,17 @@ pub fn throw_grenade_on_key(
         // In network mode, server is authoritative for grenade explosions.
         return;
     }
-    if prompt.active || !keys.just_pressed(KeyCode::KeyQ) {
+    let mounted = rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false);
+    let mouse_throw = if mounted {
+        mouse_events
+            .read()
+            .any(|e| e.button == MouseButton::Right && e.state == ButtonState::Pressed)
+    } else {
+        mouse_events.clear();
+        false
+    };
+
+    if prompt.active || !(keys.just_pressed(KeyCode::KeyQ) || mouse_throw) {
         return;
     }
 

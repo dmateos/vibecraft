@@ -436,11 +436,17 @@ fn tick_helicopter(
             forward = c.normalize();
         }
     }
-    motion.velocity += forward * thrust_fb * 18.0 * dt;
-    motion.velocity.y += (lift * 20.0 - 9.0) * dt;
-    motion.velocity *= Vec3::new(0.96, 0.98, 0.96);
-    if motion.velocity.length() > 24.0 {
-        motion.velocity = motion.velocity.normalize() * 24.0;
+    // Helicopter tuning: neutral stick should sink slowly, not drop hard.
+    // Space/Shift act as collective up/down around a near-hover baseline.
+    let forward_accel = 30.0;
+    let collective_accel = 14.0;
+    let neutral_lift = 7.6;
+    let gravity_pull = 8.2;
+    motion.velocity += forward * thrust_fb * forward_accel * dt;
+    motion.velocity.y += (neutral_lift + lift * collective_accel - gravity_pull) * dt;
+    motion.velocity *= Vec3::new(0.975, 0.992, 0.975);
+    if motion.velocity.length() > 32.0 {
+        motion.velocity = motion.velocity.normalize() * 32.0;
     }
     let next = transform.translation + motion.velocity * dt;
     if !collides_vehicle(world, next, VehicleKind::Helicopter) {
