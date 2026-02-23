@@ -15,6 +15,7 @@ mod player;
 mod sky;
 mod streaming;
 mod ui;
+mod vehicles;
 mod water;
 mod weapons;
 mod weather;
@@ -101,6 +102,8 @@ fn configure_startup_resources(app: &mut App) {
         .insert_resource(ui::GameUiFlow::default())
         .insert_resource(ui::DebugOverlayState::default())
         .insert_resource(ui::FrameStats::default())
+        .insert_resource(vehicles::VehicleRiderState::default())
+        .insert_resource(vehicles::VehicleYardSpawnState::default())
         .add_event::<block_edit::LocalBlockEditEvent>()
         .add_event::<block_edit::BlockMutationRequest>();
 }
@@ -128,6 +131,7 @@ fn configure_startup_systems(app: &mut App) {
             clouds::setup_clouds,
             npc::setup_npcs,
             water::setup_water,
+            vehicles::setup_vehicle_assets,
             weapons::setup_weapons,
             generation::initialize_prompt_input,
             ui::spawn_crosshair,
@@ -156,6 +160,17 @@ fn configure_update_systems(app: &mut App) {
     .add_systems(
         Update,
         (
+            vehicles::handle_vehicle_mount_input,
+            vehicles::tick_vehicles_active,
+        )
+            .chain()
+            .after(player::camera_look)
+            .before(player::player_move_and_collision)
+            .run_if(gameplay_phase_active),
+    )
+    .add_systems(
+        Update,
+        (
             player::camera_look,
             player::player_move_and_collision,
             interact::cycle_palette_on_scroll,
@@ -171,6 +186,13 @@ fn configure_update_systems(app: &mut App) {
             weapons::process_explosion_jobs,
             weapons::tick_weapon_vfx,
         )
+            .run_if(gameplay_phase_active),
+    )
+    .add_systems(
+        Update,
+        vehicles::sync_camera_to_mounted_vehicle
+            .after(player::player_move_and_collision)
+            .before(interact::cycle_palette_on_scroll)
             .run_if(gameplay_phase_active),
     )
     .add_systems(
@@ -213,7 +235,9 @@ fn configure_update_systems(app: &mut App) {
     .add_systems(
         Update,
         (
+            vehicles::sync_vehicle_seed_reset,
             streaming::stream_chunks_around_camera,
+            vehicles::spawn_vehicle_yards_from_landmarks,
             npc::stream_npcs_around_camera,
             water::queue_water_updates_from_block_edits,
             water::tick_water_simulation,

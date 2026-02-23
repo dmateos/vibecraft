@@ -261,6 +261,140 @@ pub(super) fn stamp_villages(chunk: &mut Chunk, noise: &TerrainNoise) {
     }
 }
 
+pub(super) fn stamp_vehicle_yards(chunk: &mut Chunk, noise: &TerrainNoise) {
+    const YARD_CELL: i32 = 120;
+    const YARD_MARGIN: i32 = 48;
+
+    let base_x = chunk.pos.x * CHUNK_SIZE as i32;
+    let base_z = chunk.pos.y * CHUNK_SIZE as i32;
+    let min_x = base_x - YARD_MARGIN;
+    let max_x = base_x + CHUNK_SIZE as i32 - 1 + YARD_MARGIN;
+    let min_z = base_z - YARD_MARGIN;
+    let max_z = base_z + CHUNK_SIZE as i32 - 1 + YARD_MARGIN;
+
+    let cell_min_x = div_floor(min_x, YARD_CELL);
+    let cell_max_x = div_floor(max_x, YARD_CELL);
+    let cell_min_z = div_floor(min_z, YARD_CELL);
+    let cell_max_z = div_floor(max_z, YARD_CELL);
+
+    for cz in cell_min_z..=cell_max_z {
+        for cx in cell_min_x..=cell_max_x {
+            let h = hash3(cx, cz, noise.seed ^ 0x6AC3_11D4);
+            let guaranteed_origin = cx == 0 && cz == 0;
+            if !guaranteed_origin && (h & 0xFF) < 238 {
+                continue;
+            }
+
+            let vx = cx * YARD_CELL + ((((h >> 8) as i32).rem_euclid(YARD_CELL)) - (YARD_CELL / 2));
+            let vz = cz * YARD_CELL + ((((h >> 16) as i32).rem_euclid(YARD_CELL)) - (YARD_CELL / 2));
+            if vx < min_x || vx > max_x || vz < min_z || vz > max_z {
+                continue;
+            }
+
+            let center = sample_surface(noise, vx, vz);
+            if !guaranteed_origin
+                && !matches!(center.biome, BiomeKind::Plains | BiomeKind::Rocky | BiomeKind::Forest)
+            {
+                continue;
+            }
+            if center.height as i32 <= SEA_LEVEL + 2 || center.height as i32 >= SEA_LEVEL + 30 {
+                continue;
+            }
+
+            let r = 16;
+            let s1 = sample_surface(noise, vx - r, vz).height as i32;
+            let s2 = sample_surface(noise, vx + r, vz).height as i32;
+            let s3 = sample_surface(noise, vx, vz - r).height as i32;
+            let s4 = sample_surface(noise, vx, vz + r).height as i32;
+            let max_h = s1.max(s2).max(s3).max(s4).max(center.height as i32);
+            let min_h = s1.min(s2).min(s3).min(s4).min(center.height as i32);
+            if !guaranteed_origin && max_h - min_h > 8 {
+                continue;
+            }
+
+            place_vehicle_yard(chunk, vx, center.height as i32 + 1, vz, h);
+        }
+    }
+}
+
+fn place_vehicle_yard(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) {
+    flatten_village_ground(chunk, cx, ground_y, cz, 22);
+
+    for z in -14_i32..=14_i32 {
+        for x in -14_i32..=14_i32 {
+            let block = if (x + z).abs() % 4 == 0 { Block::Stone } else { Block::Dirt };
+            set_if_inside(chunk, cx + x, ground_y, cz + z, block);
+        }
+    }
+
+    // Runway stripe.
+    for z in -14..=14 {
+        set_if_inside(chunk, cx, ground_y + 1, cz + z, Block::Yellow);
+        if z % 3 == 0 {
+            set_if_inside(chunk, cx, ground_y + 2, cz + z, Block::Air);
+        }
+    }
+
+    // Main helipad.
+    for z in -5_i32..=5_i32 {
+        for x in -5_i32..=5_i32 {
+            let d2 = x * x + z * z;
+            if d2 > 25 {
+                continue;
+            }
+            let ring = d2 >= 16;
+            set_if_inside(
+                chunk,
+                cx + x,
+                ground_y + 1,
+                cz + z,
+                if ring { Block::Stone } else { Block::Snow },
+            );
+        }
+    }
+    // "H" marker.
+    for z in -3_i32..=3_i32 {
+        set_if_inside(chunk, cx - 2, ground_y + 2, cz + z, Block::Yellow);
+        set_if_inside(chunk, cx + 2, ground_y + 2, cz + z, Block::Yellow);
+    }
+    for x in -2_i32..=2_i32 {
+        set_if_inside(chunk, cx + x, ground_y + 2, cz, Block::Yellow);
+    }
+
+    // Hangar-like shell on one side.
+    let hw = 6;
+    let hd = 4;
+    let hh = 4 + ((seed >> 20) & 1) as i32;
+    for y in 1..=hh {
+        for z in -hd..=hd {
+            for x in -hw..=hw {
+                let wx = cx + x;
+                let wz = cz - 18 + z;
+                let on_wall = x.abs() == hw || z.abs() == hd;
+                if on_wall {
+                    if z == hd && x.abs() <= 2 && y <= 3 {
+                        set_if_inside(chunk, wx, ground_y + y, wz, Block::Air);
+                    } else {
+                        set_if_inside(chunk, wx, ground_y + y, wz, Block::Stone);
+                    }
+                } else {
+                    set_if_inside(chunk, wx, ground_y + y, wz, Block::Air);
+                }
+            }
+        }
+    }
+    for z in -hd - 1..=hd + 1 {
+        for x in -hw - 1..=hw + 1 {
+            set_if_inside(chunk, cx + x, ground_y + hh + 1, cz - 18 + z, Block::Wood);
+        }
+    }
+
+    // Unique marker stack for runtime yard detection.
+    set_if_inside(chunk, cx, ground_y + 2, cz, Block::Cyan);
+    set_if_inside(chunk, cx, ground_y + 3, cz, Block::Purple);
+    set_if_inside(chunk, cx, ground_y + 4, cz, Block::Cyan);
+}
+
 fn place_village(chunk: &mut Chunk, cx: i32, ground_y: i32, cz: i32, seed: u32) {
     let radius = 30 + ((seed >> 27) & 7) as i32;
     flatten_village_ground(chunk, cx, ground_y, cz, radius + 6);

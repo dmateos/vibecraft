@@ -338,6 +338,7 @@ fn broadcast_snapshot(
         server_tick: tick,
         server_time_s,
         players,
+        vehicles: Vec::new(),
         npcs: server_npcs.iter().map(|n| n.to_net()).collect(),
         projectiles: Vec::<ProjectileStateNet>::new(),
     });

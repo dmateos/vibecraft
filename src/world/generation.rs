@@ -6,7 +6,7 @@ use crate::config::{CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT};
 
 use super::landmarks::{
     stamp_biome_features, stamp_dense_forest, stamp_desert_pyramid, stamp_grand_monument,
-    stamp_maze, stamp_megacity, stamp_observatory, stamp_trees, stamp_villages,
+    stamp_maze, stamp_megacity, stamp_observatory, stamp_trees, stamp_vehicle_yards, stamp_villages,
 };
 use super::{BiomeKind, Block, Chunk, TerrainMode};
 pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
@@ -68,6 +68,7 @@ pub fn generate_chunk(pos: IVec2, seed: u32, mode: TerrainMode) -> Chunk {
     stamp_dense_forest(&mut chunk, &noise);
     stamp_biome_features(&mut chunk, &noise);
     stamp_villages(&mut chunk, &noise);
+    stamp_vehicle_yards(&mut chunk, &noise);
     stamp_grand_monument(&mut chunk, &noise);
     stamp_megacity(&mut chunk, &noise);
     stamp_maze(&mut chunk, &noise);

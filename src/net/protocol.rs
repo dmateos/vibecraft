@@ -102,6 +102,7 @@ pub struct WorldSnapshotMsg {
     pub server_tick: u64,
     pub server_time_s: f32,
     pub players: Vec<PlayerStateNet>,
+    pub vehicles: Vec<VehicleStateNet>,
     pub npcs: Vec<NpcStateNet>,
     pub projectiles: Vec<ProjectileStateNet>,
 }
@@ -116,6 +117,26 @@ pub struct PlayerStateNet {
     pub pitch: f32,
     pub hp: f32,
     pub dead: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VehicleStateNet {
+    pub entity_id: NetEntityId,
+    pub kind: VehicleKindNet,
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub driver_client_id: Option<ClientId>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VehicleKindNet {
+    Car,
+    Boat,
+    Helicopter,
+    Plane,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

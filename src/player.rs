@@ -82,9 +82,13 @@ pub fn player_move_and_collision(
     time: Res<Time>,
     world: Res<VoxelWorld>,
     mut q: Query<(&mut Transform, &mut FlyCam)>,
+    rider: Option<Res<crate::vehicles::VehicleRiderState>>,
     prompt: Res<PromptInputState>,
 ) {
     if prompt.active {
+        return;
+    }
+    if rider.as_deref().map(|r| r.is_mounted()).unwrap_or(false) {
         return;
     }
 

@@ -708,3 +708,27 @@ pub fn toggle_water_physics_on_key(
         if cfg.enabled { "enabled" } else { "disabled" }
     );
 }
+
+pub fn sample_water_surface_height(
+    world: &VoxelWorld,
+    sim: &WaterFlowSim,
+    x: f32,
+    z: f32,
+) -> Option<f32> {
+    let wx = x.floor() as i32;
+    let wz = z.floor() as i32;
+
+    for y in (0..WORLD_HEIGHT as i32).rev() {
+        let cell = IVec3::new(wx, y, wz);
+        let level = level_at(cell, &world.chunks, sim);
+        if level > 0 {
+            return Some(y as f32 + water_height(level));
+        }
+    }
+
+    let sea = IVec3::new(wx, SEA_LEVEL, wz);
+    if is_source_cell(sea, &world.chunks, sim) {
+        return Some(SEA_LEVEL as f32 + 0.02);
+    }
+    None
+}
